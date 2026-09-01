@@ -51,4 +51,8 @@ git commit --no-verify -m "chore: temporary commit"
 
 ## 当前检查
 
-`staged-whitespace` 执行 `git diff --cached --check`，用于阻止暂存文件中的尾随空格和冲突标记。随着 Tauri、前端和本地服务工具链确定，再在 `lefthook.yml` 中增加对应的格式化、lint 和测试命令。
+- `staged-whitespace` 执行 `git diff --cached --check`，阻止暂存文件中的尾随空格和冲突标记。
+- `frontend-build` 执行 `npm run build`，检查 TypeScript 类型和 Vite 生产构建。
+- `backend-format` 执行 `cargo fmt --manifest-path backend/Cargo.toml --all -- --check`，检查 Rust 格式；使用 `backend` 作为后端目录。
+
+提交钩子不执行 `cargo check` 或网络相关操作，避免因为首次拉取依赖或外部服务不可用而阻塞普通提交。完整编译和测试在本地验证或 CI 中运行。

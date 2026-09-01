@@ -1,5 +1,8 @@
-# Keep pre-commit checks lightweight until the Tauri application toolchain is added.
 pre-commit:
   commands:
     staged-whitespace:
       run: git diff --cached --check
+    frontend-build:
+      run: npm run build
+    backend-format:
+      run: cargo fmt --manifest-path backend/Cargo.toml --all -- --check
