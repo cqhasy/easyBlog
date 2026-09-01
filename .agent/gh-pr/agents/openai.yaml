@@ -1,0 +1,4 @@
+interface:
+  display_name: "GitHub pull request workflow"
+  short_description: "Open pull requests from a reviewed branch"
+  default_prompt: "Use $gh-pr to draft and create a GitHub pull request."

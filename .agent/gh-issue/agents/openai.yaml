@@ -1,0 +1,7 @@
+interface:
+  display_name: "GitHub issue workflow"
+  short_description: "Create issues with repository-aware templates"
+  default_prompt: "Use $gh-issue to draft and create a GitHub issue."
+
+policy:
+  allow_implicit_invocation: true
