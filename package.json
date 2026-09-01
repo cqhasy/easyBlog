@@ -7,7 +7,9 @@
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "test": "vitest run",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "tauri:dev": "tauri dev --config backend/tauri.conf.json",
+    "tauri:build": "tauri build --config backend/tauri.conf.json"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.0.0",

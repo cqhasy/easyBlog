@@ -82,7 +82,7 @@ easyBlog/
 │  ├─ contracts/
 │  └─ styles/
 │
-├─ src-tauri/
+├─ backend/
 │  ├─ tauri.conf.json
 │  ├─ capabilities/
 │  └─ src/
