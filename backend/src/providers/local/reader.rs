@@ -32,10 +32,12 @@ impl LocalReader {
         Ok(Self { root })
     }
 
+    /// Returns the metadata-only tree. Use `list_markdown` or `read_file` for contents.
     pub fn read_directory(&self) -> Result<LocalFileTree, LocalReadError> {
         self.read_tree(&self.root, std::path::PathBuf::new())
     }
 
+    /// Returns Markdown files with their metadata and UTF-8 contents.
     pub fn list_markdown(&self) -> Result<Vec<LocalFile>, LocalReadError> {
         let mut files = Vec::new();
         self.collect_markdown(&self.root, &mut files)?;
@@ -110,6 +112,13 @@ impl LocalReader {
                 .map_err(|e| LocalReadError::Io(e.to_string()))?;
             entries.sort_by_key(|entry| entry.file_name());
             for entry in entries {
+                if entry
+                    .file_type()
+                    .map_err(|e| LocalReadError::Io(e.to_string()))?
+                    .is_symlink()
+                {
+                    continue;
+                }
                 let child_relative = relative_path.join(entry.file_name());
                 let child = self.resolve_path(&child_relative)?;
                 children.push(self.read_tree(&child, child_relative)?);
@@ -133,6 +142,13 @@ impl LocalReader {
             .map_err(|e| LocalReadError::Io(e.to_string()))?;
         entries.sort_by_key(|entry| entry.file_name());
         for entry in entries {
+            if entry
+                .file_type()
+                .map_err(|e| LocalReadError::Io(e.to_string()))?
+                .is_symlink()
+            {
+                continue;
+            }
             let relative = entry
                 .path()
                 .strip_prefix(&self.root)
@@ -142,7 +158,7 @@ impl LocalReader {
             if resolved.is_dir() {
                 self.collect_markdown(&resolved, files)?;
             } else if matches!(
-                resolved
+                relative
                     .extension()
                     .and_then(|e| e.to_str())
                     .map(|e| e.to_ascii_lowercase())
@@ -212,6 +228,36 @@ mod tests {
             reader.read_file(Path::new("../outside.md")),
             Err(LocalReadError::InvalidPath)
         );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn rejects_absolute_paths_and_non_utf8_content() {
+        let root = temp_root();
+        fs::write(root.join("binary.md"), [0xff, 0xfe]).unwrap();
+        let reader = LocalReader::new(&root).unwrap();
+        assert_eq!(
+            reader.read_file(&root.join("binary.md")),
+            Err(LocalReadError::InvalidPath)
+        );
+        assert_eq!(
+            reader.read_file(Path::new("binary.md")),
+            Err(LocalReadError::NonUtf8)
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn returns_directory_tree_in_stable_order() {
+        let root = temp_root();
+        fs::create_dir_all(root.join("b")).unwrap();
+        fs::write(root.join("z.txt"), "z").unwrap();
+        fs::write(root.join("a.md"), "a").unwrap();
+        fs::write(root.join("b/c.md"), "c").unwrap();
+        let tree = LocalReader::new(&root).unwrap().read_directory().unwrap();
+        assert_eq!(tree.children[0].relative_path, Path::new("a.md"));
+        assert_eq!(tree.children[1].relative_path, Path::new("b"));
+        assert_eq!(tree.children[2].relative_path, Path::new("z.txt"));
         fs::remove_dir_all(root).unwrap();
     }
 }
