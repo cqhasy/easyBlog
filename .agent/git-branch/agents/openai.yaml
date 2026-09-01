@@ -1,0 +1,4 @@
+interface:
+  display_name: "Git branch naming and creation"
+  short_description: "Name and create consistent Git branches"
+  default_prompt: "Use $git-branch to name and create a Git branch for this work."
