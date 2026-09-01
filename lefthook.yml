@@ -1,0 +1,5 @@
+# Keep pre-commit checks lightweight until the Tauri application toolchain is added.
+pre-commit:
+  commands:
+    staged-whitespace:
+      run: git diff --cached --check
