@@ -32,7 +32,7 @@ Commands remain thin and state owns a shared repository. SQLite lives in the Tau
 
 ## Validation
 
-The action trims the input path, canonicalizes it, rejects missing paths and files, and opens the directory with `read_dir` to prove readability. The stored name is the trimmed user name, or the canonical directory's final component when blank. Empty names are rejected only when no directory name can be derived.
+The action trims the input path, canonicalizes it, rejects missing paths and files, and opens the directory with `read_dir` to prove readability. The stored name is the trimmed user name, the canonical directory's final component when available, or the canonical path itself for a filesystem root.
 
 ## Testing
 

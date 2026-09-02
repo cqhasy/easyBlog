@@ -4,6 +4,7 @@ use crate::storage::sources::SourceRepository;
 use chrono::{SecondsFormat, Utc};
 use rusqlite::Error as SqliteError;
 use std::fs;
+use std::path::Path;
 use uuid::Uuid;
 
 #[cfg(test)]
@@ -36,7 +37,7 @@ mod tests {
             fs::canonicalize(&nested).unwrap().to_string_lossy()
         );
         assert_eq!(source.name, "content");
-        assert_eq!(source.source_type, "local_directory");
+        assert_eq!(source.r#type, "local_directory");
         assert!(!source.created_at.is_empty());
         drop(repo);
         fs::remove_dir_all(root).unwrap();
@@ -83,6 +84,19 @@ mod tests {
         drop(repo);
         fs::remove_dir_all(root).unwrap();
     }
+
+    #[test]
+    fn uses_canonical_path_as_default_name_for_root_directory() {
+        let root = std::env::current_dir()
+            .unwrap()
+            .ancestors()
+            .last()
+            .unwrap()
+            .to_path_buf();
+        let canonical = fs::canonicalize(root).unwrap();
+
+        assert_eq!(source_name(&canonical, None), canonical.to_string_lossy());
+    }
 }
 
 pub fn execute(
@@ -112,24 +126,13 @@ pub fn execute(
     fs::read_dir(&canonical)
         .map_err(|_| AppError::new("not_readable", "Source directory cannot be read"))?;
 
-    let source_name = name
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(ToOwned::to_owned)
-        .or_else(|| {
-            canonical
-                .file_name()
-                .and_then(|value| value.to_str())
-                .map(ToOwned::to_owned)
-        })
-        .ok_or_else(|| AppError::new("invalid_path", "Source name cannot be determined"))?;
+    let source_name = source_name(&canonical, name.as_deref());
 
     let source = Source {
         id: Uuid::new_v4().to_string(),
         path: canonical.to_string_lossy().into_owned(),
         name: source_name,
-        source_type: "local_directory".into(),
+        r#type: "local_directory".into(),
         created_at: Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true),
     };
     repository.insert(&source).map_err(|error| {
@@ -143,6 +146,19 @@ pub fn execute(
         }
     })?;
     Ok(source)
+}
+
+fn source_name(canonical: &Path, name: Option<&str>) -> String {
+    name.map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+        .or_else(|| {
+            canonical
+                .file_name()
+                .and_then(|value| value.to_str())
+                .map(ToOwned::to_owned)
+        })
+        .unwrap_or_else(|| canonical.to_string_lossy().into_owned())
 }
 
 fn is_unique_constraint(error: &SqliteError) -> bool {

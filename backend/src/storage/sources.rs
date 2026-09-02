@@ -28,7 +28,7 @@ impl SourceRepository {
                 source.id,
                 source.path,
                 source.name,
-                source.source_type,
+                source.r#type,
                 source.created_at
             ],
         )?;
@@ -49,7 +49,7 @@ impl SourceRepository {
                 id: row.get(0)?,
                 path: row.get(1)?,
                 name: row.get(2)?,
-                source_type: row.get(3)?,
+                r#type: row.get(3)?,
                 created_at: row.get(4)?,
             })
         })?;
@@ -79,7 +79,7 @@ mod tests {
             id: "source-1".into(),
             path: "C:/content".into(),
             name: "Content".into(),
-            source_type: "local_directory".into(),
+            r#type: "local_directory".into(),
             created_at: "2026-09-02T00:00:00Z".into(),
         };
 
@@ -96,7 +96,7 @@ mod tests {
             id: "source-1".into(),
             path: "C:/content".into(),
             name: "Content".into(),
-            source_type: "local_directory".into(),
+            r#type: "local_directory".into(),
             created_at: "2026-09-02T00:00:00Z".into(),
         };
         {

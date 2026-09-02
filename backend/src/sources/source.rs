@@ -7,6 +7,6 @@ pub struct Source {
     pub id: String,
     pub path: String,
     pub name: String,
-    pub source_type: String,
+    pub r#type: String,
     pub created_at: String,
 }

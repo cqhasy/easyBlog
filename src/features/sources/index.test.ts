@@ -6,7 +6,7 @@ const source: Source = {
   id: "source-1",
   path: "C:/content",
   name: "Content",
-  source_type: "local_directory",
+  type: "local_directory",
   created_at: "2026-09-02T00:00:00Z",
 };
 
