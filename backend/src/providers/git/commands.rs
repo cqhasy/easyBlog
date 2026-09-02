@@ -44,4 +44,9 @@ impl GitCommands {
     pub fn status_porcelain(root: &Path) -> Result<Vec<u8>, GitCommandError> {
         Ok(Self::run(root, &["status", "--porcelain=v1", "-z"])?.stdout)
     }
+
+    pub fn commit_sha(root: &Path) -> Result<String, GitCommandError> {
+        let output = Self::run(root, &["rev-parse", "HEAD"])?;
+        Ok(String::from_utf8_lossy(&output.stdout).trim().to_owned())
+    }
 }
