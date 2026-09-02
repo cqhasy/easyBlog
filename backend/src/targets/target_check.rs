@@ -1,4 +1,6 @@
-use std::{path::Path, process::Command};
+use std::path::Path;
+
+use crate::providers::git::GitCommands;
 
 use super::{layout::PagesLayout, target::Target};
 
@@ -47,13 +49,10 @@ pub fn check(target: &Target) -> TargetCheck {
 }
 
 fn is_git_workspace(root: &Path) -> bool {
-    let Ok(output) = Command::new("git")
-        .arg("rev-parse")
-        .arg("--is-inside-work-tree")
-        .arg("--show-toplevel")
-        .current_dir(root)
-        .output()
-    else {
+    let Ok(output) = GitCommands::run_output(
+        root,
+        &["rev-parse", "--is-inside-work-tree", "--show-toplevel"],
+    ) else {
         return false;
     };
     if !output.status.success() {

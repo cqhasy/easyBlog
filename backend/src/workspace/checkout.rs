@@ -1,9 +1,7 @@
-use std::{
-    path::{Path, PathBuf},
-    process::Command,
-};
+use std::path::{Path, PathBuf};
 
 use crate::{
+    providers::git::{GitCommandError, GitCommands, GitOutput},
     targets::{check, Target, TargetCheck, TargetState},
     workspace::{
         file_lock::{FileLock, FileLockError},
@@ -16,6 +14,7 @@ pub enum CheckoutError {
     UnsupportedTarget(TargetCheck),
     Lock(FileLockError),
     WorkingTree(WorkingTreeError),
+    TimedOut,
     Synchronization,
 }
 
@@ -78,17 +77,12 @@ fn synchronize(root: &Path, default_branch: &str) -> Result<(), CheckoutError> {
     Ok(())
 }
 
-fn run(root: &Path, arguments: &[&str]) -> Result<std::process::Output, CheckoutError> {
-    let output = Command::new("git")
-        .args(arguments)
-        .current_dir(root)
-        .output()
-        .map_err(|_| CheckoutError::Synchronization)?;
-    if output.status.success() {
-        Ok(output)
-    } else {
-        Err(CheckoutError::Synchronization)
-    }
+fn run(root: &Path, arguments: &[&str]) -> Result<GitOutput, CheckoutError> {
+    let output = GitCommands::run(root, arguments).map_err(|error| match error {
+        GitCommandError::TimedOut => CheckoutError::TimedOut,
+        _ => CheckoutError::Synchronization,
+    })?;
+    Ok(output)
 }
 
 #[cfg(test)]
