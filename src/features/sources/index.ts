@@ -16,7 +16,7 @@ export type SourcesState =
   | { status: "error"; message: string };
 
 function errorMessage(error: unknown, fallback: string): string {
-  if (error instanceof Error) return error.message;
+  if (error instanceof Error && error.message.trim()) return error.message;
   if (typeof error === "object" && error !== null && "message" in error) {
     const message = (error as { message?: unknown }).message;
     if (typeof message === "string" && message.trim()) return message;
@@ -42,6 +42,22 @@ export async function addSourceAndReload(
 ): Promise<SourcesState> {
   await api.addSource(input);
   return loadSources(api);
+}
+
+export function createSourcesRefreshController(
+  api: SourcesApi,
+  apply: (state: SourcesState) => void,
+): { begin: () => number; isCurrent: (generation: number) => boolean; refresh: () => Promise<void> } {
+  let generation = 0;
+  const begin = () => ++generation;
+  const isCurrent = (requestGeneration: number) => requestGeneration === generation;
+  const refresh = async () => {
+    const requestGeneration = begin();
+    apply({ status: "loading" });
+    const nextState = await loadSources(api);
+    if (isCurrent(requestGeneration)) apply(nextState);
+  };
+  return { begin, isCurrent, refresh };
 }
 
 function escapeHtml(value: string): string {
@@ -82,33 +98,37 @@ export function mountSources(root: HTMLElement, api: SourcesApi = { listSources,
   const render = () => {
     root.innerHTML = renderSources(state);
   };
-  const refresh = async () => {
-    state = { status: "loading" };
+  const refreshController = createSourcesRefreshController(api, (nextState) => {
+    state = nextState;
     render();
-    state = await loadSources(api);
-    render();
-  };
+  });
   root.addEventListener("submit", async (event) => {
     const form = event.target;
     if (!(form instanceof HTMLFormElement) || form.id !== "add-source-form" || !api.addSource) return;
     event.preventDefault();
     const data = new FormData(form);
+    const requestGeneration = refreshController.begin();
     try {
       state = { status: "loading" };
       render();
-      state = await addSourceAndReload(api as Required<SourcesApi>, {
+      const nextState = await addSourceAndReload(api as Required<SourcesApi>, {
         path: String(data.get("path") ?? ""),
         name: String(data.get("name") ?? "") || undefined,
       });
-      render();
+      if (refreshController.isCurrent(requestGeneration)) {
+        state = nextState;
+        render();
+      }
     } catch (error) {
-      state = { status: "error", message: errorMessage(error, "Source could not be added") };
-      render();
+      if (refreshController.isCurrent(requestGeneration)) {
+        state = { status: "error", message: errorMessage(error, "Source could not be added") };
+        render();
+      }
     }
   });
   root.addEventListener("click", (event) => {
-    if ((event.target as HTMLElement).closest("[data-action=retry]")) void refresh();
+    if ((event.target as HTMLElement).closest("[data-action=retry]")) void refreshController.refresh();
   });
   render();
-  void refresh();
+  void refreshController.refresh();
 }
