@@ -99,35 +99,43 @@ export function renderChanges(state: ChangesState, selected = new Set<string>(),
 
 export type ChangesController = { refresh: () => void };
 
+export function createChangesRefreshController(
+  api: ChangesApi,
+  apply: (state: ChangesState, scopes: ScopeSummary[]) => void,
+): { refresh: (requestedScopeId?: ScopeId) => Promise<void> } {
+  let generation = 0;
+  const refresh = async (requestedScopeId?: ScopeId) => {
+    const currentGeneration = ++generation;
+    apply({ status: "loading" }, []);
+    try {
+      const scopes = (await api.listScopes()).filter((summary) => summary.scope.lifecycle === "active");
+      if (!scopes.length) {
+        if (currentGeneration === generation) apply({ status: "needs_scope" }, []);
+        return;
+      }
+      const scope = scopes.find((summary) => summary.scope.id === requestedScopeId) ?? scopes[0];
+      const changes = await api.listChanges(scope.scope.id);
+      if (currentGeneration === generation) apply(changes.length ? { status: "ready", scope, changes } : { status: "empty", scope }, scopes);
+    } catch (error) {
+      if (currentGeneration === generation) apply({ status: "error", message: errorMessage(error, "变更列表暂时无法读取") }, []);
+    }
+  };
+  return { refresh };
+}
+
 export function mountChanges(root: HTMLElement, api: ChangesApi = { listScopes, scanScope, listChanges }): ChangesController {
   let state: ChangesState = { status: "loading" };
   let selected = new Set<string>();
   let scanning = false;
   let scopes: ScopeSummary[] = [];
-  let refreshGeneration = 0;
   const render = () => { root.innerHTML = renderChanges(state, selected, scanning, scopes); };
-  const refresh = async (requestedScopeId?: ScopeId) => {
-    const generation = ++refreshGeneration;
-    state = { status: "loading" };
-    render();
-    try {
-      const nextScopes = (await api.listScopes()).filter((summary) => summary.scope.lifecycle === "active");
-      if (!nextScopes.length) state = { status: "needs_scope" };
-      else {
-        const scope = nextScopes.find((summary) => summary.scope.id === requestedScopeId) ?? nextScopes[0];
-        const changes = await api.listChanges(scope.scope.id);
-        if (generation !== refreshGeneration) return;
-        scopes = nextScopes;
-        state = changes.length ? { status: "ready", scope, changes } : { status: "empty", scope };
-      }
-    } catch (error) {
-      if (generation !== refreshGeneration) return;
-      state = { status: "error", message: errorMessage(error, "变更列表暂时无法读取") };
-    }
-    if (generation !== refreshGeneration) return;
+  const refreshController = createChangesRefreshController(api, (nextState, nextScopes) => {
+    state = nextState;
+    scopes = nextScopes;
     if (state.status === "ready") selected = new Set(defaultSelectedChanges(state.changes).map((change) => change.id));
     render();
-  };
+  });
+  const refresh = (requestedScopeId?: ScopeId) => refreshController.refresh(requestedScopeId);
   root.addEventListener("click", (event) => {
     const action = (event.target as HTMLElement).closest<HTMLElement>("[data-action]")?.dataset.action;
     if (action === "retry") { void refresh(); return; }

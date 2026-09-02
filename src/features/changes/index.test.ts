@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
-import { defaultSelectedChanges, groupChanges, loadChanges, renderChanges, selectableChanges } from "./index";
+import { describe, expect, it, vi } from "vitest";
+import { createChangesRefreshController, defaultSelectedChanges, groupChanges, loadChanges, renderChanges, selectableChanges } from "./index";
 import type { Change, ScopeSummary } from "../../contracts";
 
 const scope: ScopeSummary = {
@@ -30,5 +30,28 @@ describe("changes workspace", () => {
   it("loads persisted changes for the first active scope", async () => {
     const state = await loadChanges({ listScopes: async () => [scope], listChanges: async () => [change("added")], scanScope: async () => ({ changes: [], scanned_at: "now" }) });
     expect(state).toMatchObject({ status: "ready", scope, changes: [expect.objectContaining({ kind: "added" })] });
+  });
+
+  it("keeps the newest workbench refresh when source changes arrive during a pending read", async () => {
+    let resolveFirst!: (value: ScopeSummary[]) => void;
+    let resolveSecond!: (value: ScopeSummary[]) => void;
+    const first = new Promise<ScopeSummary[]>((resolve) => { resolveFirst = resolve; });
+    const second = new Promise<ScopeSummary[]>((resolve) => { resolveSecond = resolve; });
+    const listScopes = vi.fn().mockReturnValueOnce(first).mockReturnValueOnce(second);
+    const listChanges = vi.fn().mockResolvedValue([change("added")]);
+    const applied: string[] = [];
+    const controller = createChangesRefreshController({ listScopes, listChanges, scanScope: async () => ({ changes: [], scanned_at: "now" }) }, (state) => {
+      if (state.status === "ready") applied.push(state.scope.scope.id);
+    });
+
+    const initial = controller.refresh();
+    const afterSourceChange = controller.refresh();
+    resolveSecond([scope]);
+    await afterSourceChange;
+    resolveFirst([]);
+    await initial;
+
+    expect(applied).toEqual([scope.scope.id]);
+    expect(listChanges).toHaveBeenCalledOnce();
   });
 });
