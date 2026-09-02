@@ -1,6 +1,6 @@
 use std::{path::Path, sync::Mutex};
 
-use rusqlite::{params, Connection, OptionalExtension, Result};
+use rusqlite::{params, types::Type, Connection, Error, OptionalExtension, Result};
 use serde::Serialize;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -21,6 +21,7 @@ pub struct PublicationRecord {
 pub enum PublicationState {
     PendingPush,
     Published,
+    RollbackPending,
     RolledBack,
 }
 
@@ -76,7 +77,12 @@ impl PublicationRepository {
         commit_sha: &str,
         rolled_back_at: &str,
     ) -> Result<()> {
-        self.connection.lock().expect("publication repository lock poisoned").execute("UPDATE publications SET state = 'rolled_back', rollback_commit_sha = ?2, rolled_back_at = ?3 WHERE batch_id = ?1 AND state = 'published'", params![batch_id, commit_sha, rolled_back_at])?;
+        self.connection.lock().expect("publication repository lock poisoned").execute("UPDATE publications SET state = 'rolled_back', rollback_commit_sha = ?2, rolled_back_at = ?3 WHERE batch_id = ?1 AND state = 'rollback_pending'", params![batch_id, commit_sha, rolled_back_at])?;
+        Ok(())
+    }
+
+    pub fn mark_rollback_pending(&self, batch_id: &str, commit_sha: &str) -> Result<()> {
+        self.connection.lock().expect("publication repository lock poisoned").execute("UPDATE publications SET state = 'rollback_pending', rollback_commit_sha = ?2 WHERE batch_id = ?1 AND state = 'published'", params![batch_id, commit_sha])?;
         Ok(())
     }
 }
@@ -84,19 +90,93 @@ impl PublicationRepository {
 fn row(row: &rusqlite::Row<'_>) -> Result<PublicationRecord> {
     let state: String = row.get(5)?;
     let change_ids: String = row.get(4)?;
+    let change_ids = serde_json::from_str(&change_ids)
+        .map_err(|error| Error::FromSqlConversionFailure(4, Type::Text, Box::new(error)))?;
     Ok(PublicationRecord {
         batch_id: row.get(0)?,
         scope_id: row.get(1)?,
         target_id: row.get(2)?,
         commit_sha: row.get(3)?,
-        change_ids: serde_json::from_str(&change_ids).unwrap_or_default(),
+        change_ids,
         state: match state.as_str() {
             "pending_push" => PublicationState::PendingPush,
+            "published" => PublicationState::Published,
+            "rollback_pending" => PublicationState::RollbackPending,
             "rolled_back" => PublicationState::RolledBack,
-            _ => PublicationState::Published,
+            _ => {
+                return Err(Error::FromSqlConversionFailure(
+                    5,
+                    Type::Text,
+                    format!("Unknown publication state: {state}").into(),
+                ));
+            }
         },
         published_at: row.get(6)?,
         rollback_commit_sha: row.get(7)?,
         rolled_back_at: row.get(8)?,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    use rusqlite::Connection;
+
+    use super::*;
+
+    fn temp_db() -> std::path::PathBuf {
+        let suffix = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        std::env::temp_dir().join(format!("easyblog-publications-{suffix}.db"))
+    }
+
+    fn insert_raw(path: &std::path::Path, state: &str, change_ids: &str) {
+        let connection = Connection::open(path).unwrap();
+        connection.execute("PRAGMA foreign_keys = ON", []).unwrap();
+        connection
+            .execute(
+                "INSERT INTO sources (id, path, name, source_type, created_at) VALUES ('source', 'C:/content', 'Content', 'local_directory', 'now')",
+                [],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO scopes (id, source_id, name, lifecycle, revision, include_patterns, exclude_patterns, created_at, updated_at) VALUES ('scope', 'source', 'Posts', 'active', 1, '[]', '[]', 'now', 'now')",
+                [],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO publications (batch_id, scope_id, target_id, commit_sha, change_ids, state) VALUES ('batch', 'scope', 'target', 'sha', ?1, ?2)",
+                params![change_ids, state],
+            )
+            .unwrap();
+    }
+
+    #[test]
+    fn rejects_an_unknown_persisted_state() {
+        let path = temp_db();
+        let repository = PublicationRepository::open(&path).unwrap();
+        insert_raw(&path, "mystery", "[]");
+
+        assert!(repository.get("batch").is_err());
+
+        drop(repository);
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn rejects_corrupt_persisted_change_ids() {
+        let path = temp_db();
+        let repository = PublicationRepository::open(&path).unwrap();
+        insert_raw(&path, "published", "not-json");
+
+        assert!(repository.get("batch").is_err());
+
+        drop(repository);
+        std::fs::remove_file(path).unwrap();
+    }
 }

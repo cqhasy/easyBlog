@@ -11,8 +11,8 @@ export type ChangesApi = {
   scanScope: (scopeId: ScopeId) => Promise<{ changes: Change[]; scanned_at: string }>;
   listChanges: (scopeId: ScopeId) => Promise<Change[]>;
   listTargets?: () => Promise<ConnectedTarget[]>;
-  previewRelease?: (input: { scope_id: ScopeId; target: Target; change_ids: string[] }) => Promise<ReleasePlan>;
-  publishRelease?: (input: { scope_id: ScopeId; target: Target; change_ids: string[] }) => Promise<Publication>;
+  previewRelease?: (input: { scope_id: ScopeId; change_ids: string[] }) => Promise<ReleasePlan>;
+  publishRelease?: (input: { scope_id: ScopeId; change_ids: string[] }) => Promise<Publication>;
 };
 
 export type ChangesState =
@@ -203,7 +203,7 @@ export function mountChanges(root: HTMLElement, api: ChangesApi = { listScopes, 
       if (!target) { release = { status: "error", message: "当前范围的发布目标不可用，请在来源页重新连接或绑定。" }; render(); return; }
       const operationGeneration = ++releaseGeneration;
       release = { status: "previewing" }; render();
-      void api.previewRelease({ scope_id: state.scope.scope.id, target, change_ids: [...selected] }).then((plan) => {
+      void api.previewRelease({ scope_id: state.scope.scope.id, change_ids: [...selected] }).then((plan) => {
         if (operationGeneration !== releaseGeneration) return;
         release = { status: "preview", plan, target };
       }).catch((error) => {
@@ -216,7 +216,7 @@ export function mountChanges(root: HTMLElement, api: ChangesApi = { listScopes, 
       const { plan, target } = release;
       const operationGeneration = ++releaseGeneration;
       release = { status: "publishing", plan, target }; render();
-      void api.publishRelease({ scope_id: plan.batch.scope_id, target, change_ids: plan.batch.change_ids }).then((publication) => {
+      void api.publishRelease({ scope_id: plan.batch.scope_id, change_ids: plan.batch.change_ids }).then((publication) => {
         if (operationGeneration !== releaseGeneration) return;
         release = { status: "published", publication };
         selected.clear();

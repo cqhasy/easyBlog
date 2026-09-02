@@ -2,6 +2,7 @@
 
 ## 2026-09-02
 
+- Hardened M2 publication recovery: release commands now resolve scope and publication Targets from persistent storage instead of trusting client-supplied workspace paths. Retry validates pending changes before pushing, rollback persists a `rollback_pending` commit before push and safely aborts failed reverts, while unknown publication states or corrupt change metadata now fail explicitly. Added regressions for stale retry data and invalid persisted publication records.
 - Closed the GitHub Pages target configuration gap: local repository roots can now be connected as durable, metadata-only Targets after Git-root and `_posts` layout validation. Targets are selectable when saving a sync Scope, invalid target IDs are rejected, and the workbench/history flows reuse the saved workspace rather than requesting a path for each release action.
 - Added target bridge coverage and target repository metadata coverage. Verified the complete workspace with `cargo fmt --manifest-path backend/Cargo.toml --all -- --check`, `cargo test --manifest-path backend/Cargo.toml` (58 tests), `npm test -- --run` (23 tests), `npm run build`, and `git diff --check`.
 - Continued M2 release recovery: publications are now persisted as `pending_push`, `published`, or `rolled_back` records. A failed push leaves its committed batch recoverable; retry pushes that existing commit before advancing local snapshots, and rollback creates and pushes a new Git revert commit without rewriting remote history.

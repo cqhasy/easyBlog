@@ -33,7 +33,7 @@ export interface Publication {
   commit_sha: string;
   published_at: string;
 }
-export type PublicationState = "pending_push" | "published" | "rolled_back";
+export type PublicationState = "pending_push" | "published" | "rollback_pending" | "rolled_back";
 export interface PublicationRecord {
   batch_id: ReleaseBatchId;
   commit_sha: string;

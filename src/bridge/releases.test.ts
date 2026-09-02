@@ -8,24 +8,24 @@ import { listPublications, previewRelease, publishRelease, retryRelease, rollbac
 describe("releases bridge", () => {
   beforeEach(() => invoke.mockReset());
 
-  it("previews an explicit target and selected change IDs", async () => {
+  it("previews the scope-bound target and selected change IDs", async () => {
     invoke.mockResolvedValue({ preview_id: "batch-1" });
-    await previewRelease({ scope_id: "scope-1", target: { id: "target-1", workspace_path: "C:/blog" }, change_ids: ["change-1"] });
-    expect(invoke).toHaveBeenCalledWith("preview_release", { input: { scope_id: "scope-1", target: { id: "target-1", workspace_path: "C:/blog" }, change_ids: ["change-1"] } });
+    await previewRelease({ scope_id: "scope-1", change_ids: ["change-1"] });
+    expect(invoke).toHaveBeenCalledWith("preview_release", { input: { scope_id: "scope-1", change_ids: ["change-1"] } });
   });
 
   it("publishes only an explicit confirmed selection", async () => {
     invoke.mockResolvedValue({ commit_sha: "abc" });
-    await publishRelease({ scope_id: "scope-1", target: { id: "target-1", workspace_path: "C:/blog" }, change_ids: ["change-1"] });
-    expect(invoke).toHaveBeenCalledWith("publish_release", { input: { scope_id: "scope-1", target: { id: "target-1", workspace_path: "C:/blog" }, change_ids: ["change-1"] } });
+    await publishRelease({ scope_id: "scope-1", change_ids: ["change-1"] });
+    expect(invoke).toHaveBeenCalledWith("publish_release", { input: { scope_id: "scope-1", change_ids: ["change-1"] } });
   });
 
-  it("lists and recovers publication records through explicit target input", async () => {
+  it("lists and recovers publication records through the stored target", async () => {
     await listPublications();
     expect(invoke).toHaveBeenCalledWith("list_publications");
-    await retryRelease({ batch_id: "batch-1", target: { id: "target-1", workspace_path: "C:/blog" } });
-    expect(invoke).toHaveBeenCalledWith("retry_release", { input: { batch_id: "batch-1", target: { id: "target-1", workspace_path: "C:/blog" } } });
-    await rollbackPublication({ batch_id: "batch-1", target: { id: "target-1", workspace_path: "C:/blog" } });
-    expect(invoke).toHaveBeenCalledWith("rollback_publication", { input: { batch_id: "batch-1", target: { id: "target-1", workspace_path: "C:/blog" } } });
+    await retryRelease({ batch_id: "batch-1" });
+    expect(invoke).toHaveBeenCalledWith("retry_release", { input: { batch_id: "batch-1" } });
+    await rollbackPublication({ batch_id: "batch-1" });
+    expect(invoke).toHaveBeenCalledWith("rollback_publication", { input: { batch_id: "batch-1" } });
   });
 });

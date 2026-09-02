@@ -75,5 +75,12 @@ pub fn initialize(connection: &Connection) -> Result<()> {
            rolled_back_at TEXT
          );
          CREATE INDEX IF NOT EXISTS publications_by_scope ON publications(scope_id, published_at DESC);",
-    )
+    )?;
+    migrate_publication_states(connection)
+}
+
+fn migrate_publication_states(_connection: &Connection) -> Result<()> {
+    // Publication state is stored as text, so introducing rollback_pending requires
+    // no table rewrite and remains compatible with existing publication rows.
+    Ok(())
 }
