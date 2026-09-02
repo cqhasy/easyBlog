@@ -55,6 +55,25 @@ impl SourceRepository {
         })?;
         rows.collect()
     }
+
+    pub fn get(&self, id: &str) -> Result<Option<Source>> {
+        let connection = self
+            .connection
+            .lock()
+            .expect("source repository lock poisoned");
+        let mut statement = connection
+            .prepare("SELECT id, path, name, source_type, created_at FROM sources WHERE id = ?1")?;
+        let mut rows = statement.query_map([id], |row| {
+            Ok(Source {
+                id: row.get(0)?,
+                path: row.get(1)?,
+                name: row.get(2)?,
+                r#type: row.get(3)?,
+                created_at: row.get(4)?,
+            })
+        })?;
+        rows.next().transpose()
+    }
 }
 
 #[cfg(test)]
