@@ -80,7 +80,7 @@ mod tests {
 
         assert!(matches!(
             WorkingTree::require_clean(&root),
-            Err(WorkingTreeError::Dirty { entries }) if entries.len() == 1 && entries[0].path == "post.md"
+            Err(WorkingTreeError::Dirty { entries }) if entries.len() == 1 && entries[0].path == b"post.md"
         ));
         assert_eq!(
             fs::read_to_string(root.join("post.md")).unwrap(),

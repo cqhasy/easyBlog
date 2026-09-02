@@ -1,6 +1,6 @@
 use std::{
     collections::HashSet,
-    path::Path,
+    path::{Path, PathBuf},
     sync::{Mutex, OnceLock},
 };
 
@@ -10,28 +10,28 @@ pub enum FileLockError {
     InvalidWorkspace { workspace: String },
 }
 
-fn locked_workspaces() -> &'static Mutex<HashSet<String>> {
-    static LOCKS: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+fn locked_workspaces() -> &'static Mutex<HashSet<PathBuf>> {
+    static LOCKS: OnceLock<Mutex<HashSet<PathBuf>>> = OnceLock::new();
     LOCKS.get_or_init(|| Mutex::new(HashSet::new()))
 }
 
 pub struct FileLock {
-    workspace: String,
+    workspace: PathBuf,
 }
 
 impl FileLock {
     pub fn acquire(workspace: &Path) -> Result<Self, FileLockError> {
-        let workspace = std::fs::canonicalize(workspace)
-            .map_err(|_| FileLockError::InvalidWorkspace {
+        let workspace =
+            std::fs::canonicalize(workspace).map_err(|_| FileLockError::InvalidWorkspace {
                 workspace: workspace.display().to_string(),
-            })?
-            .display()
-            .to_string();
+            })?;
         let mut locks = locked_workspaces()
             .lock()
             .expect("workspace locks poisoned");
         if !locks.insert(workspace.clone()) {
-            return Err(FileLockError::Busy { workspace });
+            return Err(FileLockError::Busy {
+                workspace: workspace.display().to_string(),
+            });
         }
         Ok(Self { workspace })
     }
@@ -62,5 +62,24 @@ mod tests {
         drop(lock);
         assert!(FileLock::acquire(&directory).is_ok());
         std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn distinguishes_non_utf8_canonical_workspace_paths() {
+        use std::os::unix::ffi::OsStringExt;
+
+        let root =
+            std::env::temp_dir().join(format!("easyblog-workspace-lock-{}", uuid::Uuid::new_v4()));
+        let first = root.join(std::ffi::OsString::from_vec(b"workspace-\xff".to_vec()));
+        let second = root.join(std::ffi::OsString::from_vec(b"workspace-\xfe".to_vec()));
+        std::fs::create_dir_all(&first).unwrap();
+        std::fs::create_dir(&second).unwrap();
+
+        let first_lock = FileLock::acquire(&first).unwrap();
+        let second_lock = FileLock::acquire(&second).unwrap();
+        drop(second_lock);
+        drop(first_lock);
+        std::fs::remove_dir_all(root).unwrap();
     }
 }

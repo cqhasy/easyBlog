@@ -2,6 +2,8 @@
 
 ## 2026-09-02
 
+- Addressed protected-workspace review findings: Git porcelain paths now stay as raw bytes through parsing, workspace locks identify canonical paths with `PathBuf`, and preview patches use valid unified-diff hunks while preserving missing-final-newline state.
+- Added regressions for non-UTF-8 porcelain path bytes, Unix non-UTF-8 lock identities, and newline-only file changes.
 - Completed M2.2 protected target workspace groundwork: Git status parsing now detects dirty and externally edited files without modifying the repository, a target-scoped in-process lock prevents concurrent operations, and checkout acquisition validates both the supported target and a clean working tree.
 - Added deterministic structured text diffs for generated preview files, alongside Git command/error contracts. Temporary Git repository tests cover external edits; focused workspace tests cover concurrent locks, porcelain rename parsing, and no-write diff rendering.
 - Corrected Git target validation after review: target roots are now verified by `git rev-parse` rather than `.git` path inspection, so fake metadata directories are blocked and valid linked worktrees are accepted.
