@@ -7,7 +7,7 @@ export interface Source {
   id: string;
   path: string;
   name: string;
-  source_type: "local_directory";
+  type: "local_directory";
   created_at: string;
 }
 
