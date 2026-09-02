@@ -85,6 +85,21 @@ impl ChangeRepository {
             .collect::<Result<Vec<_>>>()?;
         Ok(changes)
     }
+
+    pub fn remove(&self, scope_id: &str, change_ids: &[String]) -> Result<()> {
+        let mut connection = self
+            .connection
+            .lock()
+            .expect("change repository lock poisoned");
+        let transaction = connection.transaction()?;
+        for id in change_ids {
+            transaction.execute(
+                "DELETE FROM changes WHERE scope_id = ?1 AND id = ?2",
+                params![scope_id, id],
+            )?;
+        }
+        transaction.commit()
+    }
 }
 
 fn replace_changes(

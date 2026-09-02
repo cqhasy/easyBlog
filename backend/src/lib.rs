@@ -43,7 +43,8 @@ pub fn run() {
             commands::scopes::get_source_children,
             commands::changes::scan_scope,
             commands::changes::list_changes,
-            commands::releases::preview_release
+            commands::releases::preview_release,
+            commands::releases::publish_release
         ])
         .run(tauri::generate_context!())
         .expect("error while running easyBlog");

@@ -115,7 +115,11 @@ fn select_changes(available: &[Change], requested: &BTreeSet<String>) -> AppResu
     Ok(selected)
 }
 
-fn build_file_set(source_root: &str, target: &Target, changes: &[Change]) -> AppResult<FileSet> {
+pub(crate) fn build_file_set(
+    source_root: &str,
+    target: &Target,
+    changes: &[Change],
+) -> AppResult<FileSet> {
     let reader = LocalReader::new(source_root)
         .map_err(|_| AppError::new("not_readable", "Source directory cannot be read"))?;
     let template = Template::new(target.layout.clone());
