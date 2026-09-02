@@ -2,7 +2,6 @@ use crate::{
     actions,
     app::state::AppState,
     shared::errors::{AppError, AppResult},
-    targets::Target,
 };
 use serde::Deserialize;
 use tauri::State;
@@ -10,7 +9,6 @@ use tauri::State;
 #[derive(Debug, Deserialize)]
 pub struct PreviewReleaseCommandInput {
     pub scope_id: String,
-    pub target: Target,
     pub change_ids: Vec<String>,
 }
 
@@ -22,14 +20,16 @@ pub async fn preview_release(
     let sources = state.sources.clone();
     let scopes = state.scopes.clone();
     let changes = state.changes.clone();
+    let targets = state.targets.clone();
     tauri::async_runtime::spawn_blocking(move || {
+        let target = target_for_scope(&scopes, &targets, &input.scope_id)?;
         actions::preview_release::execute(
             &sources,
             &scopes,
             &changes,
             actions::preview_release::PreviewReleaseInput {
                 scope_id: input.scope_id,
-                target: input.target,
+                target,
                 change_ids: input.change_ids,
             },
         )
@@ -46,7 +46,6 @@ pub async fn preview_release(
 #[derive(Debug, Deserialize)]
 pub struct PublishReleaseCommandInput {
     pub scope_id: String,
-    pub target: Target,
     pub change_ids: Vec<String>,
 }
 
@@ -58,14 +57,18 @@ pub async fn publish_release(
     let sources = state.sources.clone();
     let scopes = state.scopes.clone();
     let changes = state.changes.clone();
+    let publications = state.publications.clone();
+    let targets = state.targets.clone();
     tauri::async_runtime::spawn_blocking(move || {
+        let target = target_for_scope(&scopes, &targets, &input.scope_id)?;
         actions::publish_release::execute(
             &sources,
             &scopes,
             &changes,
+            &publications,
             actions::publish_release::PublishReleaseInput {
                 scope_id: input.scope_id,
-                target: input.target,
+                target,
                 change_ids: input.change_ids,
             },
         )
@@ -77,4 +80,23 @@ pub async fn publish_release(
             "Release publication could not be completed",
         )
     })?
+}
+
+fn target_for_scope(
+    scopes: &crate::storage::scopes::ScopeRepository,
+    targets: &crate::storage::targets::TargetRepository,
+    scope_id: &str,
+) -> AppResult<crate::targets::Target> {
+    let scope = scopes
+        .get(scope_id)
+        .map_err(|_| AppError::new("storage_error", "Scope could not be loaded"))?
+        .ok_or_else(|| AppError::new("scope_not_found", "Scope no longer exists"))?;
+    let target_id = scope.target_id.ok_or_else(|| {
+        AppError::new("scope_needs_target", "This scope needs a publishing target")
+    })?;
+    targets
+        .get(&target_id)
+        .map_err(|_| AppError::new("storage_error", "Publishing target could not be loaded"))?
+        .map(|connected| connected.target)
+        .ok_or_else(|| AppError::new("target_not_found", "The publishing target no longer exists"))
 }

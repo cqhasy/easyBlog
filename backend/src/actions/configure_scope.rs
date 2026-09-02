@@ -5,18 +5,20 @@ use crate::scopes::scope::{
 use crate::shared::errors::{AppError, AppResult};
 use crate::storage::scopes::ScopeRepository;
 use crate::storage::sources::SourceRepository;
+use crate::storage::targets::TargetRepository;
 use chrono::{SecondsFormat, Utc};
 use uuid::Uuid;
 
 pub fn save(
     sources: &SourceRepository,
     scopes: &ScopeRepository,
+    targets: &TargetRepository,
     mut input: SaveScopeInput,
     expected_revision: Option<i64>,
 ) -> AppResult<ScopeSummary> {
     input.include_patterns = normalize_patterns(input.include_patterns);
     input.exclude_patterns = normalize_patterns(input.exclude_patterns);
-    validate_input(sources, &input)?;
+    validate_input(sources, targets, &input)?;
     let existing = input
         .id
         .as_deref()
@@ -103,7 +105,11 @@ pub fn set_lifecycle(
     Ok(summary(scope))
 }
 
-fn validate_input(sources: &SourceRepository, input: &SaveScopeInput) -> AppResult<()> {
+fn validate_input(
+    sources: &SourceRepository,
+    targets: &TargetRepository,
+    input: &SaveScopeInput,
+) -> AppResult<()> {
     if input.name.trim().is_empty() {
         return Err(AppError::new(
             "invalid_scope_name",
@@ -140,6 +146,18 @@ fn validate_input(sources: &SourceRepository, input: &SaveScopeInput) -> AppResu
         .is_none()
     {
         return Err(AppError::new("source_not_found", "Source no longer exists"));
+    }
+    if let Some(target_id) = &input.target_id {
+        if targets
+            .get(target_id)
+            .map_err(|_| AppError::new("storage_error", "Publishing target could not be loaded"))?
+            .is_none()
+        {
+            return Err(AppError::new(
+                "target_not_found",
+                "Publishing target no longer exists",
+            ));
+        }
     }
     Ok(())
 }
@@ -217,6 +235,7 @@ fn is_ancestor_path(ancestor: &str, descendant: &str) -> bool {
 mod tests {
     use super::*;
     use crate::sources::source::Source;
+    use crate::storage::targets::TargetRepository;
     use std::time::{SystemTime, UNIX_EPOCH};
 
     fn temp_db() -> std::path::PathBuf {
@@ -277,6 +296,7 @@ mod tests {
         let path = temp_db();
         let sources = SourceRepository::open(&path).unwrap();
         let scopes = ScopeRepository::open(&path).unwrap();
+        let targets = TargetRepository::open(&path).unwrap();
         let source = Source {
             id: "source-1".into(),
             path: "C:/content".into(),
@@ -295,9 +315,10 @@ mod tests {
             include_patterns: vec![],
             exclude_patterns: vec![],
         };
-        let error = save(&sources, &scopes, input, None).unwrap_err();
+        let error = save(&sources, &scopes, &targets, input, None).unwrap_err();
         assert_eq!(error.code, "empty_scope_selection");
         drop(scopes);
+        drop(targets);
         drop(sources);
         let _ = std::fs::remove_file(path);
     }
@@ -307,6 +328,7 @@ mod tests {
         let path = temp_db();
         let sources = SourceRepository::open(&path).unwrap();
         let scopes = ScopeRepository::open(&path).unwrap();
+        let targets = TargetRepository::open(&path).unwrap();
         let source = Source {
             id: "source-1".into(),
             path: "C:/content".into(),
@@ -325,13 +347,14 @@ mod tests {
             include_patterns: vec![" /private/** ".into()],
             exclude_patterns: vec![],
         };
-        let error = save(&sources, &scopes, input.clone(), None).unwrap_err();
+        let error = save(&sources, &scopes, &targets, input.clone(), None).unwrap_err();
         assert_eq!(error.code, "invalid_scope_pattern");
 
         input.include_patterns = vec![" posts/**/*.md ".into()];
-        let saved = save(&sources, &scopes, input, None).unwrap();
+        let saved = save(&sources, &scopes, &targets, input, None).unwrap();
         assert_eq!(saved.scope.include_patterns, vec!["posts/**/*.md"]);
         drop(scopes);
+        drop(targets);
         drop(sources);
         let _ = std::fs::remove_file(path);
     }
@@ -341,6 +364,7 @@ mod tests {
         let path = temp_db();
         let sources = SourceRepository::open(&path).unwrap();
         let scopes = ScopeRepository::open(&path).unwrap();
+        let targets = TargetRepository::open(&path).unwrap();
         let source = Source {
             id: "source-1".into(),
             path: "C:/content".into(),
@@ -359,7 +383,7 @@ mod tests {
             include_patterns: vec![],
             exclude_patterns: vec![],
         };
-        let saved = save(&sources, &scopes, input, None).unwrap();
+        let saved = save(&sources, &scopes, &targets, input, None).unwrap();
         let update = SaveScopeInput {
             id: Some(saved.scope.id),
             source_id: source.id,
@@ -371,9 +395,10 @@ mod tests {
             exclude_patterns: vec![],
         };
 
-        let error = save(&sources, &scopes, update, None).unwrap_err();
+        let error = save(&sources, &scopes, &targets, update, None).unwrap_err();
         assert_eq!(error.code, "scope_revision_conflict");
         drop(scopes);
+        drop(targets);
         drop(sources);
         let _ = std::fs::remove_file(path);
     }
