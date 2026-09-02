@@ -94,7 +94,7 @@ fn row(row: &rusqlite::Row<'_>) -> Result<ConnectedTarget> {
             },
             state: match row.get::<_, String>(9)?.as_str() {
                 "ready" => TargetState::Ready,
-                "needs_initialization" => TargetState::NeedsInitialization,
+                "needs_configuration" | "needs_initialization" => TargetState::NeedsConfiguration,
                 "needs_recovery" => TargetState::NeedsRecovery,
                 _ => TargetState::NeedsReconnect,
             },
@@ -113,7 +113,7 @@ fn visibility_name(value: &TargetVisibility) -> &'static str {
 fn state_name(value: &TargetState) -> &'static str {
     match value {
         TargetState::Ready => "ready",
-        TargetState::NeedsInitialization => "needs_initialization",
+        TargetState::NeedsConfiguration => "needs_configuration",
         TargetState::NeedsRecovery => "needs_recovery",
         TargetState::NeedsReconnect => "needs_reconnect",
     }

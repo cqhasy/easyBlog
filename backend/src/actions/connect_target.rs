@@ -10,7 +10,7 @@ use chrono::{SecondsFormat, Utc};
 use crate::{
     shared::errors::{AppError, AppResult},
     storage::targets::{ConnectedTarget, TargetRepository},
-    targets::{check, Target, TargetCheck, TargetState, TargetVisibility},
+    targets::{Target, TargetState, TargetVisibility},
 };
 
 pub struct ConnectTargetInput {
@@ -68,19 +68,15 @@ pub fn execute(
         let _ = remove_new_workspace(workspace_root, &workspace_path);
         return Err(error);
     }
-    let mut target = Target {
+    let target = Target {
         id,
         workspace_path,
         repository: input.repository.clone(),
         default_branch: input.default_branch,
         visibility: input.visibility,
-        state: TargetState::Ready,
+        // Connecting a repository must not guess its publishing adapter or content paths.
+        state: TargetState::NeedsConfiguration,
         layout: Default::default(),
-    };
-    target.state = match check(&target) {
-        TargetCheck::Ready { .. } => TargetState::Ready,
-        TargetCheck::NeedsInitialization => TargetState::NeedsInitialization,
-        TargetCheck::Unsupported { .. } => TargetState::NeedsRecovery,
     };
     let connected = ConnectedTarget {
         name: input.repository,
@@ -101,105 +97,6 @@ fn repository_connection_lock(key: &str) -> Arc<Mutex<()>> {
         .entry(key.to_owned())
         .or_insert_with(|| Arc::new(Mutex::new(())))
         .clone()
-}
-
-pub fn initialize(targets: &TargetRepository, id: &str) -> AppResult<ConnectedTarget> {
-    let mut target = targets
-        .get(id)
-        .map_err(storage_error)?
-        .ok_or_else(|| AppError::new("target_not_found", "Publishing target no longer exists"))?;
-    if target.target.state != TargetState::NeedsInitialization {
-        return Err(AppError::new(
-            "target_not_initializable",
-            "This target does not need initialization",
-        ));
-    }
-    let root = &target.target.workspace_path;
-    let current_branch = Command::new("git")
-        .args(["branch", "--show-current"])
-        .current_dir(root)
-        .output()
-        .map_err(|_| {
-            AppError::new(
-                "git_unavailable",
-                "Git is required to prepare this repository",
-            )
-        })?;
-    if current_branch.status.success()
-        && String::from_utf8_lossy(&current_branch.stdout).trim() != target.target.default_branch
-    {
-        git(root, &["checkout", "-B", &target.target.default_branch])?;
-    }
-    std::fs::create_dir_all(root.join(&target.target.layout.posts_directory)).map_err(|_| {
-        AppError::new(
-            "target_initialization_failed",
-            "Blog structure could not be created",
-        )
-    })?;
-    std::fs::create_dir_all(root.join(&target.target.layout.resources_directory)).map_err(
-        |_| {
-            AppError::new(
-                "target_initialization_failed",
-                "Blog structure could not be created",
-            )
-        },
-    )?;
-    let marker = root
-        .join(&target.target.layout.posts_directory)
-        .join(".gitkeep");
-    if !marker.exists() {
-        std::fs::write(&marker, "").map_err(|_| {
-            AppError::new(
-                "target_initialization_failed",
-                "Blog structure could not be created",
-            )
-        })?;
-    }
-    git(root, &["add", "--", "."])?;
-    git(
-        root,
-        &[
-            "-c",
-            "user.name=easyBlog",
-            "-c",
-            "user.email=easyblog@local",
-            "commit",
-            "-m",
-            "Initialize easyBlog structure",
-        ],
-    )?;
-    git(
-        root,
-        &[
-            "push",
-            "origin",
-            &format!("HEAD:{}", target.target.default_branch),
-        ],
-    )?;
-    target.target.state = TargetState::Ready;
-    targets.update(&target).map_err(storage_error)?;
-    Ok(target)
-}
-
-fn git(root: &Path, arguments: &[&str]) -> AppResult<()> {
-    let output = Command::new("git")
-        .args(arguments)
-        .current_dir(root)
-        .output()
-        .map_err(|_| {
-            AppError::new(
-                "git_unavailable",
-                "Git is required to prepare this repository",
-            )
-        })?;
-    if output.status.success() {
-        Ok(())
-    } else {
-        Err(AppError::new(
-            "target_initialization_failed",
-            "Blog structure could not be initialized and pushed",
-        ))
-    }
 }
 
 fn fetch_prune(root: &Path) -> AppResult<()> {

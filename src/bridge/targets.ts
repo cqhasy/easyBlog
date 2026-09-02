@@ -28,7 +28,3 @@ export function connectTarget(input: { repository: string; default_branch: strin
     visibility: input.visibility,
   });
 }
-
-export function initializeTarget(targetId: string): Promise<ConnectedTarget> {
-  return invoke<ConnectedTarget>("initialize_target", { targetId });
-}

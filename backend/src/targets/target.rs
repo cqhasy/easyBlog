@@ -47,7 +47,7 @@ pub enum TargetVisibility {
 #[serde(rename_all = "snake_case")]
 pub enum TargetState {
     Ready,
-    NeedsInitialization,
+    NeedsConfiguration,
     NeedsRecovery,
     NeedsReconnect,
 }

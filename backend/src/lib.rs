@@ -46,7 +46,6 @@ pub fn run() {
             commands::targets::list_targets,
             commands::targets::list_github_repositories,
             commands::targets::refresh_github_repository_permissions,
-            commands::targets::initialize_target,
             commands::scopes::save_scope,
             commands::scopes::list_scopes,
             commands::scopes::set_scope_lifecycle,

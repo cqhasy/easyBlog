@@ -15,7 +15,7 @@ export interface Target {
   repository: string;
   default_branch: string;
   visibility: "public" | "private";
-  state: "ready" | "needs_initialization" | "needs_recovery" | "needs_reconnect";
+  state: "ready" | "needs_configuration" | "needs_recovery" | "needs_reconnect";
   layout?: { posts_directory: string; resources_directory: string };
 }
 export interface ConnectedTarget extends Target {

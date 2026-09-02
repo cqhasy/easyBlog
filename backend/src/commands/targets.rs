@@ -74,25 +74,6 @@ pub async fn refresh_github_repository_permissions() -> AppResult<Vec<GithubRepo
 }
 
 #[tauri::command]
-pub async fn initialize_target(
-    state: State<'_, AppState>,
-    target_id: String,
-) -> AppResult<ConnectedTarget> {
-    let targets = state.targets.clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        actions::github_auth::require_ready()?;
-        actions::connect_target::initialize(&targets, &target_id)
-    })
-    .await
-    .map_err(|_| {
-        AppError::new(
-            "target_initialization_failed",
-            "Blog structure could not be initialized",
-        )
-    })?
-}
-
-#[tauri::command]
 pub fn list_targets(state: State<'_, AppState>) -> AppResult<Vec<ConnectedTarget>> {
     actions::list_targets::execute(&state.targets)
 }
