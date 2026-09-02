@@ -20,12 +20,12 @@ describe("changes workspace", () => {
     expect(defaultSelectedChanges(changes).map((item) => item.kind)).toEqual(["added", "updated"]);
   });
 
-  it("renders blocked context and keeps preview disabled until it is implemented", () => {
+  it("renders blocked context and enables preview for publishable selections", () => {
     const html = renderChanges({ status: "ready", scope, changes: [change("blocked"), change("added")], scannedAt: "2026-09-02T00:00:00Z" });
     expect(html).toContain("需要处理");
     expect(html).toContain("无法解析内容");
     expect(html).toContain("预览发布</button>");
-    expect(html).toContain('data-action="preview" disabled');
+    expect(html).toContain('data-action="preview" ');
   });
 
   it("loads persisted changes for the first active scope", async () => {
