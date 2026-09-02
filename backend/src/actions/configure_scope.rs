@@ -11,9 +11,11 @@ use uuid::Uuid;
 pub fn save(
     sources: &SourceRepository,
     scopes: &ScopeRepository,
-    input: SaveScopeInput,
+    mut input: SaveScopeInput,
     expected_revision: Option<i64>,
 ) -> AppResult<ScopeSummary> {
+    input.include_patterns = normalize_patterns(input.include_patterns);
+    input.exclude_patterns = normalize_patterns(input.exclude_patterns);
     validate_input(sources, &input)?;
     let existing = input
         .id
@@ -45,8 +47,8 @@ pub fn save(
             .map(|scope| scope.revision + 1)
             .unwrap_or(1),
         selections: input.selections,
-        include_patterns: normalize_patterns(input.include_patterns),
-        exclude_patterns: normalize_patterns(input.exclude_patterns),
+        include_patterns: input.include_patterns,
+        exclude_patterns: input.exclude_patterns,
         created_at: existing
             .as_ref()
             .map(|scope| scope.created_at.clone())
@@ -170,7 +172,7 @@ fn summary_with_overlap(scope: Scope, candidates: &[Scope]) -> ScopeSummary {
                     scope
                         .selections
                         .iter()
-                        .any(|selection| selection.node == other.node)
+                        .any(|selection| selections_overlap(selection, other))
                 })
         })
     }) {
@@ -195,10 +197,35 @@ fn summary_with_overlap(scope: Scope, candidates: &[Scope]) -> ScopeSummary {
     }
 }
 
+fn selections_overlap(
+    left: &crate::scopes::scope::ScopeSelection,
+    right: &crate::scopes::scope::ScopeSelection,
+) -> bool {
+    left.node == right.node
+        || (left.recursive && is_ancestor_path(&left.node.value, &right.node.value))
+        || (right.recursive && is_ancestor_path(&right.node.value, &left.node.value))
+}
+
+fn is_ancestor_path(ancestor: &str, descendant: &str) -> bool {
+    ancestor == "."
+        || descendant
+            .strip_prefix(ancestor)
+            .is_some_and(|suffix| suffix.starts_with('/'))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::sources::source::Source;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn temp_db() -> std::path::PathBuf {
+        let suffix = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        std::env::temp_dir().join(format!("easyblog-configure-scope-{suffix}.db"))
+    }
 
     fn scope(id: &str, target_id: &str) -> Scope {
         Scope {
@@ -233,7 +260,23 @@ mod tests {
     }
 
     #[test]
+    fn marks_recursive_ancestor_overlap_across_targets_as_blocked() {
+        let first = scope("scope-1", "target-a");
+        let mut second = scope("scope-2", "target-b");
+        second.selections[0].node.value = "posts/article.md".into();
+        second.selections[0].recursive = false;
+
+        let summary = summary_with_overlap(first, &[second]);
+
+        assert_eq!(summary.health, ScopeHealth::Blocked);
+        assert_eq!(summary.diagnostics[0].code, "cross_target_overlap");
+    }
+
+    #[test]
     fn rejects_empty_scope_selections_before_storage() {
+        let path = temp_db();
+        let sources = SourceRepository::open(&path).unwrap();
+        let scopes = ScopeRepository::open(&path).unwrap();
         let source = Source {
             id: "source-1".into(),
             path: "C:/content".into(),
@@ -241,9 +284,10 @@ mod tests {
             r#type: "local_directory".into(),
             created_at: "2026-09-02T00:00:00Z".into(),
         };
+        sources.insert(&source).unwrap();
         let input = SaveScopeInput {
             id: None,
-            source_id: source.id,
+            source_id: source.id.clone(),
             target_id: None,
             name: "Posts".into(),
             lifecycle: ScopeLifecycle::Active,
@@ -251,7 +295,86 @@ mod tests {
             include_patterns: vec![],
             exclude_patterns: vec![],
         };
-        assert_eq!(input.selections.is_empty(), true);
-        assert_eq!(input.name.trim().is_empty(), false);
+        let error = save(&sources, &scopes, input, None).unwrap_err();
+        assert_eq!(error.code, "empty_scope_selection");
+        drop(scopes);
+        drop(sources);
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn rejects_patterns_that_become_absolute_after_normalization() {
+        let path = temp_db();
+        let sources = SourceRepository::open(&path).unwrap();
+        let scopes = ScopeRepository::open(&path).unwrap();
+        let source = Source {
+            id: "source-1".into(),
+            path: "C:/content".into(),
+            name: "Content".into(),
+            r#type: "local_directory".into(),
+            created_at: "2026-09-02T00:00:00Z".into(),
+        };
+        sources.insert(&source).unwrap();
+        let mut input = SaveScopeInput {
+            id: None,
+            source_id: source.id.clone(),
+            target_id: None,
+            name: "Posts".into(),
+            lifecycle: ScopeLifecycle::Active,
+            selections: scope("unused", "target").selections,
+            include_patterns: vec![" /private/** ".into()],
+            exclude_patterns: vec![],
+        };
+        let error = save(&sources, &scopes, input.clone(), None).unwrap_err();
+        assert_eq!(error.code, "invalid_scope_pattern");
+
+        input.include_patterns = vec![" posts/**/*.md ".into()];
+        let saved = save(&sources, &scopes, input, None).unwrap();
+        assert_eq!(saved.scope.include_patterns, vec!["posts/**/*.md"]);
+        drop(scopes);
+        drop(sources);
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn requires_a_revision_when_updating_an_existing_scope() {
+        let path = temp_db();
+        let sources = SourceRepository::open(&path).unwrap();
+        let scopes = ScopeRepository::open(&path).unwrap();
+        let source = Source {
+            id: "source-1".into(),
+            path: "C:/content".into(),
+            name: "Content".into(),
+            r#type: "local_directory".into(),
+            created_at: "2026-09-02T00:00:00Z".into(),
+        };
+        sources.insert(&source).unwrap();
+        let input = SaveScopeInput {
+            id: None,
+            source_id: source.id.clone(),
+            target_id: None,
+            name: "Posts".into(),
+            lifecycle: ScopeLifecycle::Active,
+            selections: scope("unused", "target").selections,
+            include_patterns: vec![],
+            exclude_patterns: vec![],
+        };
+        let saved = save(&sources, &scopes, input, None).unwrap();
+        let update = SaveScopeInput {
+            id: Some(saved.scope.id),
+            source_id: source.id,
+            target_id: None,
+            name: "Renamed posts".into(),
+            lifecycle: ScopeLifecycle::Active,
+            selections: saved.scope.selections,
+            include_patterns: vec![],
+            exclude_patterns: vec![],
+        };
+
+        let error = save(&sources, &scopes, update, None).unwrap_err();
+        assert_eq!(error.code, "scope_revision_conflict");
+        drop(scopes);
+        drop(sources);
+        let _ = std::fs::remove_file(path);
     }
 }

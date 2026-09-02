@@ -62,8 +62,8 @@ impl ScopeRepository {
                 |row| row.get(0),
             )
             .ok();
-        if let (Some(expected), Some(actual)) = (expected_revision, exists) {
-            if expected != actual {
+        if let Some(actual) = exists {
+            if expected_revision != Some(actual) {
                 return Ok(false);
             }
         }
