@@ -5,6 +5,7 @@ import {
   createSourcesRefreshController,
   formatSourcePath,
   loadSources,
+  notifyScopesChanged,
   renderSources,
   scopeLabel,
 } from "./index";
@@ -84,6 +85,12 @@ describe("sources feature", () => {
     expect(addSource).toHaveBeenCalledWith({ path: "C:/content" });
     expect(listSources).toHaveBeenCalledOnce();
     expect(state).toEqual({ status: "ready", sources: [source] });
+  });
+
+  it("notifies the workbench after a successful scope-changing operation", () => {
+    const onScopesChanged = vi.fn();
+    notifyScopesChanged(onScopesChanged);
+    expect(onScopesChanged).toHaveBeenCalledOnce();
   });
 
   it("keeps the latest refresh result when an earlier request resolves last", async () => {

@@ -48,6 +48,10 @@ export async function addSourceAndReload(
   return loadSources(api);
 }
 
+export function notifyScopesChanged(onScopesChanged: () => void): void {
+  onScopesChanged();
+}
+
 export function createSourcesRefreshController(
   api: SourcesApi,
   apply: (state: SourcesState) => void,
@@ -170,7 +174,7 @@ export function mountSources(
         const saved = await api.saveScope({ id: editor.scope?.id, source_id: editor.source.id, target_id: null, name, lifecycle: editor.scope?.lifecycle ?? "active", selections: editor.selections, include_patterns: editor.includePatterns, exclude_patterns: editor.excludePatterns }, editor.scope?.revision);
         editor = editorFor(editor.source, saved.scope);
         scopes = await (api.listScopes?.() ?? Promise.resolve([]));
-        onScopesChanged();
+        notifyScopesChanged(onScopesChanged);
       } catch (error) { editor.error = errorMessage(error, "Scope could not be saved"); }
       render(); return;
     }
@@ -191,7 +195,7 @@ export function mountSources(
         scopes = await (api.listScopes?.() ?? Promise.resolve([]));
         const addedSource = state.status === "ready" ? state.sources.find((item) => item.id === (nextState.status === "ready" ? nextState.sources.at(-1)?.id : undefined)) : undefined;
         if (addedSource) editor = editorFor(addedSource);
-        onScopesChanged();
+        notifyScopesChanged(onScopesChanged);
         render();
       }
     } catch (error) {
@@ -224,7 +228,7 @@ export function mountSources(
       const lifecycle = action === "delete-scope" ? "deleted" : activeScope.lifecycle === "paused" ? "active" : "paused";
       void api.setScopeLifecycle(activeScope.id, lifecycle, activeScope.revision).then(async () => {
         scopes = await (api.listScopes?.() ?? Promise.resolve([]));
-        onScopesChanged();
+        notifyScopesChanged(onScopesChanged);
         if (editor !== activeEditor) return;
         editor = lifecycle === "deleted" ? undefined : editorFor(activeEditor.source, scopes.find((item) => item.scope.id === activeScope.id)?.scope);
       }).catch((error) => {
