@@ -1,6 +1,7 @@
 import { addSource, getSourceChildren, listScopes, listSources, saveScope, setScopeLifecycle } from "../../bridge/sources";
+import { connectTarget, listTargets } from "../../bridge/targets";
 import type { AddSourceInput } from "../../bridge/sources";
-import type { SaveScopeInput, Scope, ScopeLifecycle, ScopeSelection, ScopeSummary, Source, SourceNodeRef, SourceTreeNode } from "../../contracts";
+import type { ConnectedTarget, SaveScopeInput, Scope, ScopeLifecycle, ScopeSelection, ScopeSummary, Source, SourceNodeRef, SourceTreeNode } from "../../contracts";
 
 export const sourcesFeature = "sources";
 
@@ -11,6 +12,8 @@ export type SourcesApi = {
   saveScope?: (input: SaveScopeInput, expectedRevision?: number) => Promise<ScopeSummary>;
   setScopeLifecycle?: (scopeId: string, lifecycle: ScopeLifecycle, expectedRevision: number) => Promise<ScopeSummary>;
   getSourceChildren?: (sourceId: string, parent?: SourceNodeRef) => Promise<SourceTreeNode[]>;
+  listTargets?: () => Promise<ConnectedTarget[]>;
+  connectTarget?: (input: { workspace_path: string; name?: string }) => Promise<ConnectedTarget>;
 };
 
 export type SourcesState =
@@ -137,28 +140,30 @@ function renderRuleRows(kind: "include" | "exclude", patterns: string[]): string
   const rows = patterns.map((pattern, index) => `<div class="rule-row"><input data-rule-kind="${kind}" data-rule-index="${index}" value="${escapeHtml(pattern)}" placeholder="例如：posts/**/*.md" /><button type="button" class="icon-button" aria-label="删除规则" data-action="remove-rule" data-rule-kind="${kind}" data-rule-index="${index}">x</button></div>`).join("");
   return `<div class="rule-list">${rows}<button class="add-rule-button" type="button" data-action="add-rule" data-rule-kind="${kind}">+ 添加规则</button></div>`;
 }
-function renderEditor(editor?: EditorState): string {
+function renderEditor(editor: EditorState | undefined, targets: ConnectedTarget[]): string {
   if (!editor) return '<aside class="scope-editor scope-editor-empty"><div><span class="empty-mark" aria-hidden="true">+</span><h2>选择一个同步范围</h2><p>从左侧选择已有范围，或为来源新建一个范围。</p></div></aside>';
   const scope = editor.scope;
   const lifecycleDisabled = editor.lifecyclePending ? "disabled" : "";
   const lifecycleLabel = editor.lifecyclePending ? "正在更新..." : scope?.lifecycle === "paused" ? "恢复" : "暂停";
-  return `<aside class="scope-editor" aria-label="同步范围编辑器"><header><div><p class="eyebrow">SYNC SCOPE</p><h2>${scope ? "编辑同步范围" : "新建同步范围"}</h2><p>${escapeHtml(editor.source.name)}</p></div><button class="icon-button close-button" type="button" data-action="close-editor" aria-label="关闭编辑器" title="关闭">x</button></header><form id="scope-form"><section class="editor-section scope-name-section"><label>范围名称<input name="scope-name" required value="${escapeHtml(scope?.name ?? `${editor.source.name} 同步范围`)}" /></label></section><section class="editor-section selection-section"><div class="section-heading"><div><h3>同步内容</h3><p>选择目录或单篇 Markdown 文件。</p></div></div><div class="scope-root"><label><input type="checkbox" data-action="toggle-root" ${editor.selections.some((selection) => selection.node.value === ".") ? "checked" : ""} /><span><strong>整个来源</strong><small>包含来源中的所有 Markdown 文件</small></span></label></div><div class="source-tree">${renderTree(editor)}</div></section><section class="editor-section rules-section"><div><h3>包含规则</h3><p>只同步符合这些路径规则的内容。</p></div>${renderRuleRows("include", editor.includePatterns)}</section><section class="editor-section rules-section"><div><h3>排除规则</h3><p>排除规则优先于包含规则。</p></div>${renderRuleRows("exclude", editor.excludePatterns)}</section>${editor.error ? `<p class="editor-error" role="alert">${escapeHtml(editor.error)}</p>` : ""}<footer><p class="scope-note">发布目标将在后续配置。</p><div class="editor-actions"><button type="submit">保存范围</button>${scope ? `<button class="secondary-button" type="button" data-action="toggle-lifecycle" ${lifecycleDisabled}>${lifecycleLabel}</button><button class="danger-button" type="button" data-action="delete-scope" ${lifecycleDisabled}>删除</button>` : ""}</div></footer></form></aside>`;
+  const targetOptions = [`<option value="">暂不绑定</option>`, ...targets.map((target) => `<option value="${escapeHtml(target.id)}" ${scope?.target_id === target.id ? "selected" : ""}>${escapeHtml(target.name)} · ${escapeHtml(formatSourcePath(target.workspace_path))}</option>`)].join("");
+  return `<aside class="scope-editor" aria-label="同步范围编辑器"><header><div><p class="eyebrow">SYNC SCOPE</p><h2>${scope ? "编辑同步范围" : "新建同步范围"}</h2><p>${escapeHtml(editor.source.name)}</p></div><button class="icon-button close-button" type="button" data-action="close-editor" aria-label="关闭编辑器" title="关闭">x</button></header><form id="scope-form"><section class="editor-section scope-name-section"><label>范围名称<input name="scope-name" required value="${escapeHtml(scope?.name ?? `${editor.source.name} 同步范围`)}" /></label></section><section class="editor-section target-section"><div><h3>发布目标</h3><p>选择已连接的 GitHub Pages 本地仓库。</p></div><select name="target-id">${targetOptions}</select></section><section class="editor-section selection-section"><div class="section-heading"><div><h3>同步内容</h3><p>选择目录或单篇 Markdown 文件。</p></div></div><div class="scope-root"><label><input type="checkbox" data-action="toggle-root" ${editor.selections.some((selection) => selection.node.value === ".") ? "checked" : ""} /><span><strong>整个来源</strong><small>包含来源中的所有 Markdown 文件</small></span></label></div><div class="source-tree">${renderTree(editor)}</div></section><section class="editor-section rules-section"><div><h3>包含规则</h3><p>只同步符合这些路径规则的内容。</p></div>${renderRuleRows("include", editor.includePatterns)}</section><section class="editor-section rules-section"><div><h3>排除规则</h3><p>排除规则优先于包含规则。</p></div>${renderRuleRows("exclude", editor.excludePatterns)}</section>${editor.error ? `<p class="editor-error" role="alert">${escapeHtml(editor.error)}</p>` : ""}<footer><p class="scope-note">目标仓库须已配置可用的 Git 推送认证。</p><div class="editor-actions"><button type="submit">保存范围</button>${scope ? `<button class="secondary-button" type="button" data-action="toggle-lifecycle" ${lifecycleDisabled}>${lifecycleLabel}</button><button class="danger-button" type="button" data-action="delete-scope" ${lifecycleDisabled}>删除</button>` : ""}</div></footer></form></aside>`;
 }
 
 export function mountSources(
   root: HTMLElement,
-  api: SourcesApi = { listSources, addSource, listScopes, saveScope, setScopeLifecycle, getSourceChildren },
+  api: SourcesApi = { listSources, addSource, listScopes, saveScope, setScopeLifecycle, getSourceChildren, listTargets, connectTarget },
   onScopesChanged: () => void = () => undefined,
 ): void {
   let state: SourcesState = { status: "loading" };
   let scopes: ScopeSummary[] = [];
   let editor: EditorState | undefined;
+  let targets: ConnectedTarget[] = [];
   const render = () => {
     if (state.status !== "ready") {
       root.innerHTML = renderSources(state);
       return;
     }
-    root.innerHTML = `<section class="sources-page scope-app" aria-labelledby="sources-title"><header class="workspace-header"><div><p class="eyebrow">EASYBLOG / SOURCES</p><h1 id="sources-title">内容来源</h1><p class="sources-subtitle">整理本地内容，并定义每个目录的同步范围。</p></div><form class="source-form compact-source-form" id="add-source-form"><label class="compact-source-field"><span class="visually-hidden">目录路径</span><input name="path" required aria-label="目录路径" placeholder="本地目录路径" /></label><label class="compact-source-field source-name-field"><span class="visually-hidden">显示名称</span><input name="name" aria-label="显示名称（可选）" placeholder="显示名称（可选）" /></label><button type="submit">添加来源</button></form></header><div class="scope-workspace"><main class="scope-sidebar"><div class="sidebar-heading"><div><span>来源目录</span><small>${state.sources.length} 个来源</small></div></div>${state.sources.map((source) => renderScopeList(source, scopes)).join("")}</main>${renderEditor(editor)}</div></section>`;
+    root.innerHTML = `<section class="sources-page scope-app" aria-labelledby="sources-title"><header class="workspace-header"><div><p class="eyebrow">EASYBLOG / SOURCES</p><h1 id="sources-title">内容来源</h1><p class="sources-subtitle">整理本地内容，并定义每个目录的同步范围。</p></div><form class="source-form compact-source-form" id="add-source-form"><label class="compact-source-field"><span class="visually-hidden">目录路径</span><input name="path" required aria-label="目录路径" placeholder="本地目录路径" /></label><label class="compact-source-field source-name-field"><span class="visually-hidden">显示名称</span><input name="name" aria-label="显示名称（可选）" placeholder="显示名称（可选）" /></label><button type="submit">添加来源</button></form></header><section class="target-connect"><div><strong>GitHub Pages 发布目标</strong><span>${targets.length ? `${targets.length} 个已连接` : "尚未连接"}</span></div><form id="connect-target-form"><input name="workspace-path" required aria-label="GitHub Pages 本地仓库路径" placeholder="GitHub Pages 本地仓库路径" /><input name="target-name" aria-label="目标名称（可选）" placeholder="目标名称（可选）" /><button type="submit">连接仓库</button></form></section><div class="scope-workspace"><main class="scope-sidebar"><div class="sidebar-heading"><div><span>来源目录</span><small>${state.sources.length} 个来源</small></div></div>${state.sources.map((source) => renderScopeList(source, scopes)).join("")}</main>${renderEditor(editor, targets)}</div></section>`;
   };
   const refreshController = createSourcesRefreshController(api, (nextState) => {
     state = nextState;
@@ -169,13 +174,24 @@ export function mountSources(
       event.preventDefault();
       if (!editor || !api.saveScope) return;
       const name = String(new FormData(event.target).get("scope-name") ?? "");
+      const targetId = String(new FormData(event.target).get("target-id") ?? "");
       editor.error = undefined;
       try {
-        const saved = await api.saveScope({ id: editor.scope?.id, source_id: editor.source.id, target_id: null, name, lifecycle: editor.scope?.lifecycle ?? "active", selections: editor.selections, include_patterns: editor.includePatterns, exclude_patterns: editor.excludePatterns }, editor.scope?.revision);
+        const saved = await api.saveScope({ id: editor.scope?.id, source_id: editor.source.id, target_id: targetId || null, name, lifecycle: editor.scope?.lifecycle ?? "active", selections: editor.selections, include_patterns: editor.includePatterns, exclude_patterns: editor.excludePatterns }, editor.scope?.revision);
         editor = editorFor(editor.source, saved.scope);
         notifyScopesChanged(onScopesChanged);
         scopes = await (api.listScopes?.() ?? Promise.resolve([]));
       } catch (error) { editor.error = errorMessage(error, "Scope could not be saved"); }
+      render(); return;
+    }
+    if (event.target instanceof HTMLFormElement && event.target.id === "connect-target-form" && api.connectTarget) {
+      event.preventDefault();
+      const data = new FormData(event.target);
+      try {
+        const connected = await api.connectTarget({ workspace_path: String(data.get("workspace-path") ?? ""), name: String(data.get("target-name") ?? "") || undefined });
+        targets = [...targets, connected];
+        event.target.reset();
+      } catch (error) { if (editor) editor.error = errorMessage(error, "GitHub Pages 仓库无法连接"); }
       render(); return;
     }
     const form = event.target;
@@ -252,7 +268,7 @@ export function mountSources(
     if (rules && input.dataset.ruleIndex !== undefined) rules[Number(input.dataset.ruleIndex)] = input.value;
   });
   render();
-  void refreshController.refresh().then(async () => { scopes = await (api.listScopes?.() ?? Promise.resolve([])); render(); });
+  void refreshController.refresh().then(async () => { [scopes, targets] = await Promise.all([api.listScopes?.() ?? Promise.resolve([]), api.listTargets?.() ?? Promise.resolve([])]); render(); });
 }
 
 function toggleSelection(editor: EditorState, node: SourceNodeRef, displayName: string, isDirectory: boolean, selected: boolean): void { const key = selectionKey(node); const index = editor.selections.findIndex((selection) => selectionKey(selection.node) === key); if (selected && index < 0) editor.selections.push({ node, display_name: displayName, recursive: isDirectory }); if (!selected && index >= 0) editor.selections.splice(index, 1); }

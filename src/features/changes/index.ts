@@ -1,7 +1,8 @@
 import { listChanges, scanScope } from "../../bridge/changes";
 import { previewRelease, publishRelease } from "../../bridge/releases";
 import { listScopes } from "../../bridge/sources";
-import type { Change, ChangeKind, Publication, ReleasePlan, ScopeId, ScopeSummary, Target } from "../../contracts";
+import { listTargets } from "../../bridge/targets";
+import type { Change, ChangeKind, ConnectedTarget, Publication, ReleasePlan, ScopeId, ScopeSummary, Target } from "../../contracts";
 
 export const changesFeature = "changes";
 
@@ -9,8 +10,9 @@ export type ChangesApi = {
   listScopes: () => Promise<ScopeSummary[]>;
   scanScope: (scopeId: ScopeId) => Promise<{ changes: Change[]; scanned_at: string }>;
   listChanges: (scopeId: ScopeId) => Promise<Change[]>;
-  previewRelease?: (input: { scope_id: ScopeId; target: Target; change_ids: string[] }) => Promise<ReleasePlan>;
-  publishRelease?: (input: { scope_id: ScopeId; target: Target; change_ids: string[] }) => Promise<Publication>;
+  listTargets?: () => Promise<ConnectedTarget[]>;
+  previewRelease?: (input: { scope_id: ScopeId; change_ids: string[] }) => Promise<ReleasePlan>;
+  publishRelease?: (input: { scope_id: ScopeId; change_ids: string[] }) => Promise<Publication>;
 };
 
 export type ChangesState =
@@ -109,15 +111,15 @@ export function renderChanges(state: ChangesState, selected = new Set<string>(),
   return `<main class="changes-page" aria-labelledby="changes-title">${header}<section class="changes-toolbar" aria-label="检测控制"><div><label for="changes-scope">检测范围</label><select id="changes-scope" data-action="change-scope" ${scanning ? "disabled" : ""}>${scopeOptions}</select><span>${changeCount ? `发现 ${changeCount} 项待确认变更` : "检查此范围的新变化"}</span></div><button type="button" data-action="scan" ${scanning ? "disabled" : ""}>${scanning ? "正在检测..." : "立即检测"}</button></section>${body}<footer class="selection-bar ${selectedCount ? "selection-active" : ""}"><span>${selectedCount ? `已选择 ${selectedCount} 项` : "选择变更后可预览发布"}</span><button type="button" data-action="preview" ${selectedCount ? "" : "disabled"}>预览发布</button></footer></main>`;
 }
 
-function renderReleasePanel(release: ReleaseState, workspacePath: string, selectedCount: number, targetId?: string | null): string {
+function renderReleasePanel(release: ReleaseState, connectedTarget: ConnectedTarget | undefined, selectedCount: number, targetId?: string | null): string {
   if (release.status === "idle") return "";
   if (release.status === "published") return `<section class="release-panel" role="status"><header><div><p class="eyebrow">EASYBLOG / PUBLISHED</p><h2>发布已推送</h2></div><button type="button" class="icon-button close-button" data-action="close-release" aria-label="关闭发布结果">×</button></header><p>提交 <code>${escapeHtml(release.publication.commit_sha)}</code> 已推送到远程仓库。</p><button type="button" data-action="finish-release">返回变更列表</button></section>`;
   const error = release.status === "error" ? `<p class="release-error" role="alert">${escapeHtml(release.message)}</p>` : "";
-  const disabled = !workspacePath.trim() || !targetId || release.status === "previewing" || release.status === "publishing";
+  const disabled = !connectedTarget || !targetId || release.status === "previewing" || release.status === "publishing";
   const plan = release.status === "preview" || release.status === "publishing" ? release.plan : undefined;
-  const target = release.status === "preview" || release.status === "publishing" ? release.target : undefined;
+  const previewTarget = release.status === "preview" || release.status === "publishing" ? release.target : undefined;
   const diffs = plan ? `<div class="release-diffs">${plan.diffs.map((diff) => `<article class="release-diff"><header><strong>${escapeHtml(diff.path)}</strong><span class="diff-kind diff-${diff.kind}">${escapeHtml(diff.kind)}</span></header><pre>${escapeHtml(diff.patch)}</pre></article>`).join("")}</div>` : "";
-  return `<section class="release-panel" aria-labelledby="release-title"><header><div><p class="eyebrow">EASYBLOG / RELEASE</p><h2 id="release-title">${plan ? "确认发布内容" : "预览发布"}</h2></div><button type="button" class="icon-button close-button" data-action="close-release" aria-label="关闭发布预览">×</button></header><p class="release-intro">本次将处理 ${selectedCount} 项变更。发布前会再次检查 Git 工作区是否干净。</p><label class="release-workspace" for="release-workspace">GitHub Pages 本地工作区<input id="release-workspace" data-action="workspace-path" value="${escapeHtml(target?.workspace_path ?? workspacePath)}" placeholder="C:\\path\\to\\blog" ${plan ? "disabled" : ""} /></label>${targetId ? "" : "<p class=\"release-error\">当前范围尚未绑定发布目标。</p>"}${error}${plan ? `<p class="release-summary">${plan.diffs.length} 个目标文件${plan.needs_configuration ? "，包含首次发布配置" : ""}。</p>${diffs}<footer><button type="button" class="secondary-button" data-action="close-release" ${release.status === "publishing" ? "disabled" : ""}>返回修改</button><button type="button" data-action="publish" ${release.status === "publishing" ? "disabled" : ""}>${release.status === "publishing" ? "正在提交并推送..." : "确认发布"}</button></footer>` : `<footer><button type="button" class="secondary-button" data-action="close-release">取消</button><button type="button" data-action="run-preview" ${disabled ? "disabled" : ""}>${release.status === "previewing" ? "正在生成预览..." : "生成预览"}</button></footer>`}</section>`;
+  return `<section class="release-panel" aria-labelledby="release-title"><header><div><p class="eyebrow">EASYBLOG / RELEASE</p><h2 id="release-title">${plan ? "确认发布内容" : "预览发布"}</h2></div><button type="button" class="icon-button close-button" data-action="close-release" aria-label="关闭发布预览">×</button></header><p class="release-intro">本次将处理 ${selectedCount} 项变更。发布前会再次检查 Git 工作区是否干净。</p>${connectedTarget ? `<p class="release-target"><strong>${escapeHtml(connectedTarget.name)}</strong><span>${escapeHtml(previewTarget?.workspace_path ?? connectedTarget.workspace_path)}</span></p>` : ""}${targetId ? connectedTarget ? "" : "<p class=\"release-error\">找不到当前范围绑定的发布目标，请重新绑定范围。</p>" : "<p class=\"release-error\">当前范围尚未绑定发布目标。</p>"}${error}${plan ? `<p class="release-summary">${plan.diffs.length} 个目标文件${plan.needs_configuration ? "，包含首次发布配置" : ""}。</p>${diffs}<footer><button type="button" class="secondary-button" data-action="close-release" ${release.status === "publishing" ? "disabled" : ""}>返回修改</button><button type="button" data-action="publish" ${release.status === "publishing" ? "disabled" : ""}>${release.status === "publishing" ? "正在提交并推送..." : "确认发布"}</button></footer>` : `<footer><button type="button" class="secondary-button" data-action="close-release">取消</button><button type="button" data-action="run-preview" ${disabled ? "disabled" : ""}>${release.status === "previewing" ? "正在生成预览..." : "生成预览"}</button></footer>`}</section>`;
 }
 
 export type ChangesController = { refresh: () => void };
@@ -154,14 +156,14 @@ export function createChangesRefreshController(
   return { refresh, begin, isCurrent };
 }
 
-export function mountChanges(root: HTMLElement, api: ChangesApi = { listScopes, scanScope, listChanges, previewRelease, publishRelease }): ChangesController {
+export function mountChanges(root: HTMLElement, api: ChangesApi = { listScopes, scanScope, listChanges, listTargets, previewRelease, publishRelease }): ChangesController {
   let state: ChangesState = { status: "loading" };
   let selected = new Set<string>();
   let scanning = false;
   let scopes: ScopeSummary[] = [];
   let currentScopeId: ScopeId | undefined;
   let release: ReleaseState = { status: "idle" };
-  let workspacePath = "";
+  let targets: ConnectedTarget[] = [];
   let releaseGeneration = 0;
   const activeScope = () => state.status === "ready" || state.status === "empty" ? state.scope : undefined;
   const invalidateRelease = () => {
@@ -170,7 +172,8 @@ export function mountChanges(root: HTMLElement, api: ChangesApi = { listScopes, 
   };
   const render = () => {
     const scope = activeScope();
-    root.innerHTML = renderChanges(state, selected, scanning, scopes) + renderReleasePanel(release, workspacePath, selected.size, scope?.scope.target_id);
+    const target = targets.find((item) => item.id === scope?.scope.target_id);
+    root.innerHTML = renderChanges(state, selected, scanning, scopes) + renderReleasePanel(release, target, selected.size, scope?.scope.target_id);
   };
   const refreshController = createChangesRefreshController(api, (nextState, nextScopes) => {
     state = nextState;
@@ -179,9 +182,14 @@ export function mountChanges(root: HTMLElement, api: ChangesApi = { listScopes, 
     if (state.status === "ready") selected = new Set(defaultSelectedChanges(state.changes).map((change) => change.id));
     render();
   });
-  const refresh = (requestedScopeId?: ScopeId, preserveRelease = false) => {
+  const refresh = async (requestedScopeId?: ScopeId, preserveRelease = false) => {
     if (!preserveRelease) invalidateRelease();
-    return refreshController.refresh(requestedScopeId ?? currentScopeId);
+    const [, loadedTargets] = await Promise.all([
+      refreshController.refresh(requestedScopeId ?? currentScopeId),
+      api.listTargets?.() ?? Promise.resolve([]),
+    ]);
+    targets = loadedTargets;
+    render();
   };
   root.addEventListener("click", (event) => {
     const action = (event.target as HTMLElement).closest<HTMLElement>("[data-action]")?.dataset.action;
@@ -191,11 +199,11 @@ export function mountChanges(root: HTMLElement, api: ChangesApi = { listScopes, 
     if (action === "preview" && state.status === "ready") { invalidateRelease(); release = { status: "configure" }; render(); root.querySelector<HTMLInputElement>("#release-workspace")?.focus(); return; }
     if (action === "run-preview" && state.status === "ready" && api.previewRelease) {
       const targetId = state.scope.scope.target_id;
-      if (!targetId || !workspacePath.trim()) { release = { status: "error", message: "请输入已绑定 GitHub Pages 目标的本地工作区路径。" }; render(); return; }
-      const target = { id: targetId, workspace_path: workspacePath.trim() };
+      const target = targets.find((item) => item.id === targetId);
+      if (!target) { release = { status: "error", message: "当前范围的发布目标不可用，请在来源页重新连接或绑定。" }; render(); return; }
       const operationGeneration = ++releaseGeneration;
       release = { status: "previewing" }; render();
-      void api.previewRelease({ scope_id: state.scope.scope.id, target, change_ids: [...selected] }).then((plan) => {
+      void api.previewRelease({ scope_id: state.scope.scope.id, change_ids: [...selected] }).then((plan) => {
         if (operationGeneration !== releaseGeneration) return;
         release = { status: "preview", plan, target };
       }).catch((error) => {
@@ -208,7 +216,7 @@ export function mountChanges(root: HTMLElement, api: ChangesApi = { listScopes, 
       const { plan, target } = release;
       const operationGeneration = ++releaseGeneration;
       release = { status: "publishing", plan, target }; render();
-      void api.publishRelease({ scope_id: plan.batch.scope_id, target, change_ids: plan.batch.change_ids }).then((publication) => {
+      void api.publishRelease({ scope_id: plan.batch.scope_id, change_ids: plan.batch.change_ids }).then((publication) => {
         if (operationGeneration !== releaseGeneration) return;
         release = { status: "published", publication };
         selected.clear();
@@ -237,7 +245,6 @@ export function mountChanges(root: HTMLElement, api: ChangesApi = { listScopes, 
   });
   root.addEventListener("change", (event) => {
     const input = event.target;
-    if (input instanceof HTMLInputElement && input.dataset.action === "workspace-path") { workspacePath = input.value; return; }
     if (input instanceof HTMLSelectElement && input.dataset.action === "change-scope") { void refresh(input.value); return; }
     if (!(input instanceof HTMLInputElement) || !input.dataset.changeId) return;
     invalidateRelease();
