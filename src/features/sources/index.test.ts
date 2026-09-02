@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { ScopeSummary, Source } from "../../contracts";
 import {
   addSourceAndReload,
+  createRepositoryRefreshController,
   createSourcesRefreshController,
   formatSourcePath,
   loadSources,
@@ -116,5 +117,26 @@ describe("sources feature", () => {
     await initialRefresh;
 
     expect(applied).toEqual([[source]]);
+  });
+
+  it("does not start a second repository refresh while the first is pending", async () => {
+    let resolve!: (value: Array<{ repository: string; default_branch: string; visibility: "public" }>) => void;
+    const pending = new Promise<Array<{ repository: string; default_branch: string; visibility: "public" }>>((next) => {
+      resolve = next;
+    });
+    const load = vi.fn().mockReturnValue(pending);
+    const apply = vi.fn();
+    const controller = createRepositoryRefreshController(load, apply);
+
+    const first = controller.refresh();
+    const duplicate = controller.refresh();
+    expect(controller.isLoading()).toBe(true);
+    expect(load).toHaveBeenCalledOnce();
+
+    resolve([{ repository: "owner/blog", default_branch: "main", visibility: "public" }]);
+    await Promise.all([first, duplicate]);
+
+    expect(controller.isLoading()).toBe(false);
+    expect(apply).toHaveBeenCalledWith([{ repository: "owner/blog", default_branch: "main", visibility: "public" }]);
   });
 });

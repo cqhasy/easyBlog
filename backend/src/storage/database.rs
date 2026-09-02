@@ -76,7 +76,34 @@ pub fn initialize(connection: &Connection) -> Result<()> {
          );
          CREATE INDEX IF NOT EXISTS publications_by_scope ON publications(scope_id, published_at DESC);",
     )?;
+    migrate_target_metadata(connection)?;
     migrate_publication_states(connection)
+}
+
+fn migrate_target_metadata(connection: &Connection) -> Result<()> {
+    let mut statement = connection.prepare("PRAGMA table_info(targets)")?;
+    let columns = statement
+        .query_map([], |row| row.get::<_, String>(1))?
+        .collect::<Result<Vec<_>>>()?;
+    for (name, definition) in [
+        ("repository", "TEXT"),
+        ("default_branch", "TEXT"),
+        ("visibility", "TEXT"),
+        ("target_state", "TEXT"),
+    ] {
+        if !columns.iter().any(|column| column == name) {
+            connection.execute(
+                &format!("ALTER TABLE targets ADD COLUMN {name} {definition}"),
+                [],
+            )?;
+        }
+    }
+    connection.execute("UPDATE targets SET repository = COALESCE(repository, 'Legacy local repository'), default_branch = COALESCE(default_branch, ''), visibility = COALESCE(visibility, 'private'), target_state = COALESCE(target_state, 'needs_reconnect')", [])?;
+    connection.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS targets_repository_branch ON targets(repository COLLATE NOCASE, default_branch) WHERE repository != 'Legacy local repository'",
+        [],
+    )?;
+    Ok(())
 }
 
 fn migrate_publication_states(_connection: &Connection) -> Result<()> {

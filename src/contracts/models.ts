@@ -4,14 +4,29 @@ export type TargetId = string;
 export type ChangeId = string;
 export type ReleaseBatchId = string;
 
+export type GithubAuthorizationState = "ready" | "missing_cli" | "unauthenticated" | "unavailable";
+export interface GithubAuthorization {
+  state: GithubAuthorizationState;
+  login: string | null;
+}
+
 export interface Target {
   id: TargetId;
-  workspace_path: string;
+  repository: string;
+  default_branch: string;
+  visibility: "public" | "private";
+  state: "ready" | "needs_configuration" | "needs_recovery" | "needs_reconnect";
   layout?: { posts_directory: string; resources_directory: string };
 }
 export interface ConnectedTarget extends Target {
   name: string;
   created_at: string;
+}
+export interface GithubRepository {
+  repository: string;
+  visibility: "public" | "private";
+  default_branch: string;
+  description: string | null;
 }
 export interface ReleaseBatch {
   id: ReleaseBatchId;
