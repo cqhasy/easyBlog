@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use crate::providers::git::GitCommands;
+use crate::providers::git::{GitCommandError, GitCommands};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum GithubRemoteError {
@@ -8,6 +8,7 @@ pub enum GithubRemoteError {
     UnsupportedHost,
     SshProtocol,
     Unreadable,
+    TimedOut,
 }
 
 pub struct GithubRemote;
@@ -15,19 +16,33 @@ pub struct GithubRemote;
 impl GithubRemote {
     pub fn verify(root: &Path) -> Result<(), GithubRemoteError> {
         let output = GitCommands::run_output(root, &["remote", "get-url", "origin"])
-            .map_err(|_| GithubRemoteError::MissingOrigin)?;
+            .map_err(map_get_url_error)?;
         if !output.status.success() {
             return Err(GithubRemoteError::MissingOrigin);
         }
         let remote = String::from_utf8_lossy(&output.stdout).trim().to_owned();
         validate_https_remote(&remote)?;
-        let reachable = GitCommands::run_output(root, &["ls-remote", "origin"])
-            .map_err(|_| GithubRemoteError::Unreadable)?;
+        let reachable =
+            GitCommands::run_output(root, &["ls-remote", "origin"]).map_err(map_ls_remote_error)?;
         if reachable.status.success() {
             Ok(())
         } else {
             Err(GithubRemoteError::Unreadable)
         }
+    }
+}
+
+fn map_get_url_error(error: GitCommandError) -> GithubRemoteError {
+    match error {
+        GitCommandError::TimedOut => GithubRemoteError::TimedOut,
+        _ => GithubRemoteError::MissingOrigin,
+    }
+}
+
+fn map_ls_remote_error(error: GitCommandError) -> GithubRemoteError {
+    match error {
+        GitCommandError::TimedOut => GithubRemoteError::TimedOut,
+        _ => GithubRemoteError::Unreadable,
     }
 }
 
@@ -47,7 +62,9 @@ fn validate_https_remote(remote: &str) -> Result<(), GithubRemoteError> {
 
 #[cfg(test)]
 mod tests {
-    use super::{validate_https_remote, GithubRemoteError};
+    use crate::providers::git::GitCommandError;
+
+    use super::{map_get_url_error, map_ls_remote_error, validate_https_remote, GithubRemoteError};
 
     #[test]
     fn accepts_only_github_com_https_repository_remotes() {
@@ -62,6 +79,18 @@ mod tests {
         assert_eq!(
             validate_https_remote("https://github.example.com/octocat/blog.git"),
             Err(GithubRemoteError::UnsupportedHost)
+        );
+    }
+
+    #[test]
+    fn preserves_git_timeouts() {
+        assert_eq!(
+            map_get_url_error(GitCommandError::TimedOut),
+            GithubRemoteError::TimedOut
+        );
+        assert_eq!(
+            map_ls_remote_error(GitCommandError::TimedOut),
+            GithubRemoteError::TimedOut
         );
     }
 }

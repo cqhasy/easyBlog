@@ -45,9 +45,16 @@ pub fn execute(
     let workspace_path = workspace_root.join(&id);
     let clone_url = format!("https://github.com/{repository}.git");
     let workspace_argument = workspace_path.to_string_lossy().into_owned();
-    let cloned =
-        GitCommands::run_output(workspace_root, &["clone", &clone_url, &workspace_argument])
-            .map_err(git_prepare_error)?;
+    let cloned = match GitCommands::run_output(
+        workspace_root,
+        &["clone", &clone_url, &workspace_argument],
+    ) {
+        Ok(output) => output,
+        Err(error) => {
+            let _ = remove_new_workspace(workspace_root, &workspace_path);
+            return Err(git_prepare_error(error));
+        }
+    };
     if !cloned.status.success() {
         let _ = remove_new_workspace(workspace_root, &workspace_path);
         return Err(AppError::new(
