@@ -88,3 +88,122 @@ fn kind_from(kind: &str) -> ChangeKind {
         _ => ChangeKind::Added,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    use crate::scopes::scope::{Scope, ScopeLifecycle};
+    use crate::sources::source::Source;
+    use crate::storage::scopes::ScopeRepository;
+    use crate::storage::sources::SourceRepository;
+    use crate::tracking::snapshot::Snapshot;
+
+    use super::*;
+
+    fn temp_db() -> std::path::PathBuf {
+        let suffix = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        std::env::temp_dir().join(format!("easyblog-changes-{suffix}.db"))
+    }
+
+    fn create_scope(path: &std::path::Path) {
+        let sources = SourceRepository::open(path).unwrap();
+        sources
+            .insert(&Source {
+                id: "source".into(),
+                path: "C:/content".into(),
+                name: "Content".into(),
+                r#type: "local_directory".into(),
+                created_at: "2026-09-02T00:00:00Z".into(),
+            })
+            .unwrap();
+        let scopes = ScopeRepository::open(path).unwrap();
+        scopes
+            .save(
+                &Scope {
+                    id: "scope".into(),
+                    source_id: "source".into(),
+                    target_id: None,
+                    name: "Posts".into(),
+                    lifecycle: ScopeLifecycle::Active,
+                    revision: 1,
+                    selections: vec![],
+                    include_patterns: vec![],
+                    exclude_patterns: vec![],
+                    created_at: "2026-09-02T00:00:00Z".into(),
+                    updated_at: "2026-09-02T00:00:00Z".into(),
+                },
+                None,
+            )
+            .unwrap();
+    }
+
+    #[test]
+    fn persists_change_metadata_across_reopen() {
+        let path = temp_db();
+        create_scope(&path);
+        let scanned_at = "2026-09-02T12:00:00Z";
+        let changes = vec![
+            Change {
+                id: "scope:new.md:fingerprint".into(),
+                scope_id: "scope".into(),
+                kind: ChangeKind::Moved,
+                source_identity: "new.md".into(),
+                source_path: "new.md".into(),
+                previous_path: Some("old.md".into()),
+                title: Some("New title".into()),
+                selected: true,
+                blocked_reason: None,
+                snapshot: Some(Snapshot {
+                    scope_id: "scope".into(),
+                    source_identity: "new.md".into(),
+                    source_path: "new.md".into(),
+                    title: Some("New title".into()),
+                    fingerprint: "fingerprint".into(),
+                    observed_at: scanned_at.into(),
+                }),
+            },
+            Change {
+                id: "scope:broken.md:blocked".into(),
+                scope_id: "scope".into(),
+                kind: ChangeKind::Blocked,
+                source_identity: "broken.md".into(),
+                source_path: "broken.md".into(),
+                previous_path: None,
+                title: None,
+                selected: false,
+                blocked_reason: Some("Markdown content could not be normalized".into()),
+                snapshot: None,
+            },
+        ];
+        {
+            let repository = ChangeRepository::open(&path).unwrap();
+            repository.replace("scope", scanned_at, &changes).unwrap();
+        }
+
+        let repository = ChangeRepository::open(&path).unwrap();
+        let persisted = repository.list("scope").unwrap();
+        assert_eq!(persisted.len(), 2);
+        assert_eq!(persisted[0].kind, ChangeKind::Blocked);
+        assert_eq!(
+            persisted[0].blocked_reason.as_deref(),
+            Some("Markdown content could not be normalized")
+        );
+        assert_eq!(persisted[1].kind, ChangeKind::Moved);
+        assert_eq!(persisted[1].previous_path.as_deref(), Some("old.md"));
+        assert!(persisted[1].selected);
+        assert_eq!(
+            persisted[1]
+                .snapshot
+                .as_ref()
+                .map(|snapshot| snapshot.fingerprint.as_str()),
+            Some("fingerprint")
+        );
+
+        drop(repository);
+        std::fs::remove_file(path).unwrap();
+    }
+}
