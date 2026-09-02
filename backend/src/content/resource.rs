@@ -12,13 +12,17 @@ pub struct ResourceReference {
 
 pub fn references(markdown: &str) -> Vec<ResourceReference> {
     let mut resources = Vec::new();
-    let mut in_code_fence = false;
+    let mut active_fence = None;
     for line in markdown.lines() {
-        if line.trim_start().starts_with("```") || line.trim_start().starts_with("~~~") {
-            in_code_fence = !in_code_fence;
+        let fence = fence_marker(line);
+        if let Some(marker) = active_fence {
+            if fence == Some(marker) {
+                active_fence = None;
+            }
             continue;
         }
-        if in_code_fence {
+        if let Some(marker) = fence {
+            active_fence = Some(marker);
             continue;
         }
         let mut offset = 0;
@@ -47,6 +51,13 @@ pub fn references(markdown: &str) -> Vec<ResourceReference> {
     resources.sort_by(|left, right| left.source_path.cmp(&right.source_path));
     resources.dedup_by(|left, right| left.source_path == right.source_path);
     resources
+}
+
+fn fence_marker(line: &str) -> Option<char> {
+    let line = line.trim_start();
+    ['`', '~']
+        .into_iter()
+        .find(|marker| line.starts_with(&marker.to_string().repeat(3)))
 }
 
 fn is_attachment_path(path: &str) -> bool {
@@ -87,6 +98,17 @@ mod tests {
                 ResourceReference { kind: ResourceKind::Image, source_path: "assets/diagram.png".into() },
                 ResourceReference { kind: ResourceKind::Attachment, source_path: "files/data.zip".into() },
             ]
+        );
+    }
+
+    #[test]
+    fn ignores_mixed_fence_markers_until_the_matching_fence_closes() {
+        assert_eq!(
+            references("~~~md\n```\n![skip](inside.png)\n~~~\n![keep](outside.png)\n"),
+            vec![ResourceReference {
+                kind: ResourceKind::Image,
+                source_path: "outside.png".into(),
+            }]
         );
     }
 }
