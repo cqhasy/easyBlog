@@ -1,3 +1,5 @@
+use tauri::Manager;
+
 pub mod actions;
 pub mod app;
 pub mod changes;
@@ -23,7 +25,19 @@ fn health() -> &'static str {
 
 pub fn run() {
     tauri::Builder::default()
-        .invoke_handler(tauri::generate_handler![health])
+        .setup(|app| {
+            let data_dir = app.path().app_data_dir()?;
+            std::fs::create_dir_all(&data_dir)?;
+            let state = app::wiring::build_state(data_dir.join("easyblog.sqlite"))
+                .map_err(|error| std::io::Error::other(error.to_string()))?;
+            app.manage(state);
+            Ok(())
+        })
+        .invoke_handler(tauri::generate_handler![
+            health,
+            commands::sources::add_source,
+            commands::sources::list_sources
+        ])
         .run(tauri::generate_context!())
         .expect("error while running easyBlog");
 }
