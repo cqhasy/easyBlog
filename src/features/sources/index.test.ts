@@ -1,6 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
 import type { Source } from "../../contracts";
-import { addSourceAndReload, formatSourcePath, loadSources, renderSources } from "./index";
+import {
+  addSourceAndReload,
+  createSourcesRefreshController,
+  formatSourcePath,
+  loadSources,
+  renderSources,
+} from "./index";
 
 const source: Source = {
   id: "source-1",
@@ -31,6 +37,11 @@ describe("sources feature", () => {
     expect(renderSources(state)).toContain("database unavailable");
   });
 
+  it("uses the fallback when an Error has no message", async () => {
+    const state = await loadSources({ listSources: vi.fn().mockRejectedValue(new Error()) });
+    expect(state).toEqual({ status: "error", message: "Sources could not be loaded" });
+  });
+
   it("preserves structured Tauri error messages", async () => {
     const state = await loadSources({
       listSources: vi.fn().mockRejectedValue({ code: "duplicate_source", message: "目录已添加" }),
@@ -50,5 +61,30 @@ describe("sources feature", () => {
     expect(addSource).toHaveBeenCalledWith({ path: "C:/content" });
     expect(listSources).toHaveBeenCalledOnce();
     expect(state).toEqual({ status: "ready", sources: [source] });
+  });
+
+  it("keeps the latest refresh result when an earlier request resolves last", async () => {
+    let resolveFirst!: (value: Source[]) => void;
+    let resolveSecond!: (value: Source[]) => void;
+    const first = new Promise<Source[]>((resolve) => {
+      resolveFirst = resolve;
+    });
+    const second = new Promise<Source[]>((resolve) => {
+      resolveSecond = resolve;
+    });
+    const listSources = vi.fn().mockReturnValueOnce(first).mockReturnValueOnce(second);
+    const applied: Source[][] = [];
+    const controller = createSourcesRefreshController({ listSources }, (state) => {
+      if (state.status === "ready") applied.push(state.sources);
+    });
+
+    const initialRefresh = controller.refresh();
+    const retryRefresh = controller.refresh();
+    resolveSecond([source]);
+    await retryRefresh;
+    resolveFirst([]);
+    await initialRefresh;
+
+    expect(applied).toEqual([[source]]);
   });
 });
