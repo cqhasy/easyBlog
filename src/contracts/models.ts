@@ -4,6 +4,27 @@ export type TargetId = string;
 export type ChangeId = string;
 export type ReleaseBatchId = string;
 
+export interface Target {
+  id: TargetId;
+  workspace_path: string;
+  layout?: { posts_directory: string; resources_directory: string };
+}
+export interface ReleaseBatch {
+  id: ReleaseBatchId;
+  scope_id: ScopeId;
+  target_id: TargetId;
+  change_ids: ChangeId[];
+}
+export type FileChangeKind = "added" | "modified" | "deleted" | "unchanged";
+export interface FileDiff { path: string; kind: FileChangeKind; patch: string; }
+export interface ReleasePlan {
+  preview_id: string;
+  batch: ReleaseBatch;
+  status: "awaiting_confirmation";
+  needs_configuration: boolean;
+  diffs: FileDiff[];
+}
+
 export interface Source {
   id: string;
   path: string;

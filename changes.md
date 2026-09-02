@@ -2,6 +2,8 @@
 
 ## 2026-09-02
 
+- Fixed a scan regression where a second scan could clear unconfirmed changes: source snapshots now remain the last published baseline until publication explicitly advances them, so repeated scans retain pending additions, updates, and deletions.
+- Began M2.3 release preview and planning: selected pending changes now form an explicit `ReleaseBatch`, render a read-only GitHub Pages file set, and return deterministic structured diffs. Preview acquires the protected target checkout, rejects dirty or concurrent workspaces, adds first-publish `.github/easyblog.yml`, and exposes a `preview_release` Tauri/client bridge contract for the release-preview UI.
 - Addressed protected-workspace review findings: Git porcelain paths now stay as raw bytes through parsing, workspace locks identify canonical paths with `PathBuf`, and preview patches use valid unified-diff hunks while preserving missing-final-newline state.
 - Added regressions for non-UTF-8 porcelain path bytes, Unix non-UTF-8 lock identities, and newline-only file changes.
 - Completed M2.2 protected target workspace groundwork: Git status parsing now detects dirty and externally edited files without modifying the repository, a target-scoped in-process lock prevents concurrent operations, and checkout acquisition validates both the supported target and a clean working tree.

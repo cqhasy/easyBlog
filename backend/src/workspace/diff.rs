@@ -1,6 +1,8 @@
+use serde::Serialize;
 use std::path::{Path, PathBuf};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum FileChangeKind {
     Added,
     Modified,
@@ -8,11 +10,19 @@ pub enum FileChangeKind {
     Unchanged,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct FileDiff {
+    #[serde(serialize_with = "serialize_git_path")]
     pub path: PathBuf,
     pub kind: FileChangeKind,
     pub patch: String,
+}
+
+fn serialize_git_path<S>(path: &PathBuf, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    serializer.serialize_str(&path.to_string_lossy().replace('\\', "/"))
 }
 
 pub struct Diff;
