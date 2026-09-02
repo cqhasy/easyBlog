@@ -24,6 +24,11 @@ export interface ReleasePlan {
   needs_configuration: boolean;
   diffs: FileDiff[];
 }
+export interface Publication {
+  batch_id: ReleaseBatchId;
+  commit_sha: string;
+  published_at: string;
+}
 
 export interface Source {
   id: string;
