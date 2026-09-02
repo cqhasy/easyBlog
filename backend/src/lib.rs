@@ -36,7 +36,11 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             health,
             commands::sources::add_source,
-            commands::sources::list_sources
+            commands::sources::list_sources,
+            commands::scopes::save_scope,
+            commands::scopes::list_scopes,
+            commands::scopes::set_scope_lifecycle,
+            commands::scopes::get_source_children
         ])
         .run(tauri::generate_context!())
         .expect("error while running easyBlog");
