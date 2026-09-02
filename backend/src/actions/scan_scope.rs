@@ -194,4 +194,75 @@ mod tests {
         drop(sources);
         fs::remove_dir_all(root).unwrap();
     }
+
+    #[test]
+    fn preserves_the_previous_snapshot_when_markdown_becomes_blocked() {
+        let root = temp_root();
+        let content = root.join("content");
+        fs::create_dir(&content).unwrap();
+        let database = root.join("easyblog.sqlite");
+        let sources = SourceRepository::open(&database).unwrap();
+        let scopes = ScopeRepository::open(&database).unwrap();
+        let snapshots = SnapshotRepository::open(&database).unwrap();
+        let changes = ChangeRepository::open(&database).unwrap();
+        let source = Source {
+            id: "source".into(),
+            path: fs::canonicalize(&content)
+                .unwrap()
+                .to_string_lossy()
+                .into_owned(),
+            name: "Content".into(),
+            r#type: "local_directory".into(),
+            created_at: "2026-09-02T00:00:00Z".into(),
+        };
+        sources.insert(&source).unwrap();
+        let scope = Scope {
+            id: "scope".into(),
+            source_id: source.id,
+            target_id: None,
+            name: "Posts".into(),
+            lifecycle: ScopeLifecycle::Active,
+            revision: 1,
+            selections: vec![ScopeSelection {
+                node: SourceNodeRef {
+                    kind: "local_path".into(),
+                    value: ".".into(),
+                },
+                recursive: true,
+                display_name: "Content".into(),
+            }],
+            include_patterns: vec![],
+            exclude_patterns: vec![],
+            created_at: "2026-09-02T00:00:00Z".into(),
+            updated_at: "2026-09-02T00:00:00Z".into(),
+        };
+        scopes.save(&scope, None).unwrap();
+
+        let article_path = content.join("post.md");
+        fs::write(&article_path, "# First\n").unwrap();
+        execute(&sources, &scopes, &snapshots, &changes, scope.id.clone()).unwrap();
+        let original = snapshots.list(&scope.id).unwrap().pop().unwrap();
+
+        fs::write(
+            &article_path,
+            "---\ntitle: one\ntitle: two\n---\n# Broken\n",
+        )
+        .unwrap();
+        let result = execute(&sources, &scopes, &snapshots, &changes, scope.id.clone()).unwrap();
+
+        assert_eq!(result.changes.len(), 1);
+        assert_eq!(result.changes[0].kind, ChangeKind::Blocked);
+        assert!(!result.changes[0].selected);
+        assert_eq!(
+            result.changes[0].blocked_reason.as_deref(),
+            Some("Markdown content could not be normalized")
+        );
+        assert_eq!(snapshots.list(&scope.id).unwrap(), vec![original]);
+
+        drop(changes);
+        drop(snapshots);
+        drop(scopes);
+        drop(sources);
+        fs::remove_dir_all(root).unwrap();
+    }
 }
