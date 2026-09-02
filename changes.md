@@ -2,6 +2,14 @@
 
 ## 2026-09-02
 
+- Added the M1.4 review-workspace slice: the default workbench now loads active scope changes, groups blocked, added, updated, moved, and deleted items, supports manual selection, and keeps a fixed selected-count / release-preview bar in view.
+- Added explicit manual scan and active-scope switching to the workbench. Blocked changes remain visible but cannot be selected; deleted changes remain unselected by default and may be explicitly selected for a later confirmed release.
+- Introduced a compact fixed application navigation for the available workbench and source configuration surfaces, so the new default workbench does not hide the source and scope setup flow.
+- Added focused review-workspace tests for grouping, selection defaults, blocked state rendering, and persisted-change loading. Visual verification was limited because the embedded browser blocked local Vite addresses; frontend unit tests and production build completed successfully.
+- Completed M1.3 local snapshot scanning and change comparison: active local scopes now filter selected Markdown paths using recursive and include/exclude rules, normalize content, calculate deterministic fingerprints, and persist metadata-only snapshots and pending changes.
+- Added added, updated, moved, deleted, and blocked change states. Deleted changes are unselected by default; normalization failures remain blocked and retain any prior snapshot rather than being interpreted as deletion.
+- Wired `scan_scope` and `list_changes` Tauri commands with typed client bridge contracts. SQLite stores only identities, paths, titles, hashes, timestamps, and status, never Markdown bodies or credentials.
+- Verified M1.3 with `cargo fmt --manifest-path backend/Cargo.toml --all -- --check`, `cargo test --manifest-path backend/Cargo.toml`, `npm test -- --run`, `npm run build`, and `git diff --check`.
 - Completed M1.2 Markdown normalization: source-independent articles now normalize BOM and line endings, parse deterministic flat front matter, derive display titles, record local image/download references, and reject ambiguous front matter.
 - Addressed Markdown normalization review findings: empty front matter is accepted, normalized Markdown cannot be constructed with invalid formatting, title extraction follows ATX heading syntax, and resource discovery tracks matching code-fence markers.
 - Kept final Front Matter, slug, article paths, and resource paths out of the content layer; the GitHub Pages template adapter remains responsible for those target-specific fields in M2.

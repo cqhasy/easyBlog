@@ -40,7 +40,9 @@ pub fn run() {
             commands::scopes::save_scope,
             commands::scopes::list_scopes,
             commands::scopes::set_scope_lifecycle,
-            commands::scopes::get_source_children
+            commands::scopes::get_source_children,
+            commands::changes::scan_scope,
+            commands::changes::list_changes
         ])
         .run(tauri::generate_context!())
         .expect("error while running easyBlog");

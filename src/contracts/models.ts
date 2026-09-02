@@ -54,3 +54,30 @@ export interface SourceTreeNode {
 export interface PlaceholderModel {
   id: string;
 }
+
+export type ChangeKind = "added" | "updated" | "moved" | "deleted" | "blocked";
+export interface Snapshot {
+  scope_id: ScopeId;
+  source_identity: string;
+  source_path: string;
+  title: string | null;
+  fingerprint: string;
+  observed_at: string;
+}
+export interface Change {
+  id: ChangeId;
+  scope_id: ScopeId;
+  kind: ChangeKind;
+  source_identity: string;
+  source_path: string;
+  previous_path: string | null;
+  title: string | null;
+  selected: boolean;
+  blocked_reason: string | null;
+  snapshot: Snapshot | null;
+}
+export interface ChangeSet {
+  scope_id: ScopeId;
+  scanned_at: string;
+  changes: Change[];
+}
