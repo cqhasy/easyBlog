@@ -67,6 +67,15 @@ impl LocalReader {
         })
     }
 
+    pub fn read_bytes(&self, relative_path: &Path) -> Result<Vec<u8>, LocalReadError> {
+        let path = self.resolve_path(relative_path)?;
+        let metadata = self.metadata(&path)?;
+        if metadata.0.is_dir() {
+            return Err(LocalReadError::InvalidPath);
+        }
+        fs::read(path).map_err(|error| LocalReadError::Io(error.to_string()))
+    }
+
     pub fn children(&self, parent: Option<&str>) -> Result<Vec<SourceTreeNode>, LocalReadError> {
         let relative = parent
             .filter(|value| *value != ".")

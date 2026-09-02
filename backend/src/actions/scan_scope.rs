@@ -90,8 +90,15 @@ pub fn execute(
     let mut detected = compare::compare(&scope.id, &previous, &current);
     detected.extend(blocked);
     detected.sort_by(|left, right| left.source_path.cmp(&right.source_path));
+    // Snapshots are the last published baseline, not the last scan result. Advancing
+    // them here would make an unconfirmed change disappear on the next scan.
+    let snapshots_to_persist = if detected.is_empty() {
+        &current
+    } else {
+        &previous
+    };
     changes
-        .replace_scan_result(&scope.id, &observed_at, &current, &detected)
+        .replace_scan_result(&scope.id, &observed_at, snapshots_to_persist, &detected)
         .map_err(|_| AppError::new("storage_error", "Scan results could not be saved"))?;
     Ok(crate::changes::change_set::ChangeSet {
         scope_id: scope.id,
@@ -122,7 +129,7 @@ mod tests {
     }
 
     #[test]
-    fn persists_added_updated_and_unselected_deleted_changes() {
+    fn keeps_unpublished_changes_pending_across_repeated_scans() {
         let root = temp_root();
         let content = root.join("content");
         fs::create_dir(&content).unwrap();
@@ -171,18 +178,19 @@ mod tests {
         assert_eq!(first.changes[0].kind, ChangeKind::Added);
         assert!(first.changes[0].selected);
 
+        let repeated = execute(&sources, &scopes, &snapshots, &changes, scope.id.clone()).unwrap();
+        assert_eq!(repeated.changes.len(), 1);
+        assert_eq!(repeated.changes[0].kind, ChangeKind::Added);
+        assert!(repeated.changes[0].selected);
+
         fs::write(&article_path, "# Revised\n").unwrap();
         let second = execute(&sources, &scopes, &snapshots, &changes, scope.id.clone()).unwrap();
-        assert_eq!(second.changes[0].kind, ChangeKind::Updated);
-        assert_eq!(
-            changes.list(&scope.id).unwrap()[0].kind,
-            ChangeKind::Updated
-        );
+        assert_eq!(second.changes[0].kind, ChangeKind::Added);
+        assert_eq!(changes.list(&scope.id).unwrap()[0].kind, ChangeKind::Added);
 
         fs::remove_file(article_path).unwrap();
         let third = execute(&sources, &scopes, &snapshots, &changes, scope.id.clone()).unwrap();
-        assert_eq!(third.changes[0].kind, ChangeKind::Deleted);
-        assert!(!third.changes[0].selected);
+        assert!(third.changes.is_empty());
         assert!(snapshots.list(&scope.id).unwrap().is_empty());
 
         drop(changes);
@@ -238,7 +246,7 @@ mod tests {
         let article_path = content.join("post.md");
         fs::write(&article_path, "# First\n").unwrap();
         execute(&sources, &scopes, &snapshots, &changes, scope.id.clone()).unwrap();
-        let original = snapshots.list(&scope.id).unwrap().pop().unwrap();
+        assert!(snapshots.list(&scope.id).unwrap().is_empty());
 
         fs::write(
             &article_path,
@@ -254,7 +262,85 @@ mod tests {
             result.changes[0].blocked_reason.as_deref(),
             Some("Markdown content could not be normalized")
         );
-        assert_eq!(snapshots.list(&scope.id).unwrap(), vec![original]);
+        assert!(snapshots.list(&scope.id).unwrap().is_empty());
+
+        drop(changes);
+        drop(snapshots);
+        drop(scopes);
+        drop(sources);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn retains_an_updated_change_until_a_publication_advances_the_baseline() {
+        let root = temp_root();
+        let content = root.join("content");
+        fs::create_dir(&content).unwrap();
+        let database = root.join("easyblog.sqlite");
+        let sources = SourceRepository::open(&database).unwrap();
+        let scopes = ScopeRepository::open(&database).unwrap();
+        let snapshots = SnapshotRepository::open(&database).unwrap();
+        let changes = ChangeRepository::open(&database).unwrap();
+        let source = Source {
+            id: "source".into(),
+            path: fs::canonicalize(&content)
+                .unwrap()
+                .to_string_lossy()
+                .into_owned(),
+            name: "Content".into(),
+            r#type: "local_directory".into(),
+            created_at: "now".into(),
+        };
+        sources.insert(&source).unwrap();
+        let scope = Scope {
+            id: "scope".into(),
+            source_id: source.id,
+            target_id: None,
+            name: "Posts".into(),
+            lifecycle: ScopeLifecycle::Active,
+            revision: 1,
+            selections: vec![ScopeSelection {
+                node: SourceNodeRef {
+                    kind: "local_path".into(),
+                    value: ".".into(),
+                },
+                recursive: true,
+                display_name: "Content".into(),
+            }],
+            include_patterns: vec![],
+            exclude_patterns: vec![],
+            created_at: "now".into(),
+            updated_at: "now".into(),
+        };
+        scopes.save(&scope, None).unwrap();
+        let article_path = content.join("post.md");
+        fs::write(&article_path, "# Published\n").unwrap();
+        snapshots
+            .replace(
+                &scope.id,
+                &[Snapshot {
+                    scope_id: scope.id.clone(),
+                    source_identity: "post.md".into(),
+                    source_path: "post.md".into(),
+                    title: Some("Published".into()),
+                    fingerprint: fingerprint::for_article(
+                        &normalize_local_markdown("post.md", "# Published\n").unwrap(),
+                    ),
+                    observed_at: "published".into(),
+                }],
+            )
+            .unwrap();
+
+        fs::write(&article_path, "# Revised\n").unwrap();
+        let first = execute(&sources, &scopes, &snapshots, &changes, scope.id.clone()).unwrap();
+        let repeated = execute(&sources, &scopes, &snapshots, &changes, scope.id.clone()).unwrap();
+
+        assert_eq!(first.changes[0].kind, ChangeKind::Updated);
+        assert_eq!(repeated.changes[0].kind, ChangeKind::Updated);
+        assert_eq!(
+            snapshots.list(&scope.id).unwrap()[0].title.as_deref(),
+            Some("Published")
+        );
 
         drop(changes);
         drop(snapshots);

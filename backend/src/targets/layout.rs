@@ -1,7 +1,8 @@
+use serde::{Deserialize, Serialize};
 use std::path::{Component, Path, PathBuf};
 
 /// The single GitHub Pages layout supported in v1.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PagesLayout {
     pub posts_directory: PathBuf,
     pub resources_directory: PathBuf,

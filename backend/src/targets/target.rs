@@ -1,13 +1,15 @@
 use std::path::{Path, PathBuf};
 
 use crate::shared::ids::TargetId;
+use serde::{Deserialize, Serialize};
 
 use super::layout::PagesLayout;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Target {
     pub id: TargetId,
     pub workspace_path: PathBuf,
+    #[serde(default)]
     pub layout: PagesLayout,
 }
 
