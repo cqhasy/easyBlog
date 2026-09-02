@@ -2,6 +2,8 @@
 
 ## 2026-09-02
 
+- Completed M2.1 target validation and the GitHub Pages template adapter. Target checks now require a local Git workspace with the supported `_posts` layout, report whether first-publish configuration is needed, and reject unsafe layout paths without writing to the repository.
+- Added deterministic target rendering for article front matter, Unicode-safe slugs, per-article resource paths, and the system-maintained non-sensitive `.github/easyblog.yml` content. Focused target and template tests cover layout mismatch, generated paths, configuration detection, and stable output.
 - Added the M1.4 review-workspace slice: the default workbench now loads active scope changes, groups blocked, added, updated, moved, and deleted items, supports manual selection, and keeps a fixed selected-count / release-preview bar in view.
 - Added explicit manual scan and active-scope switching to the workbench. Blocked changes remain visible but cannot be selected; deleted changes remain unselected by default and may be explicitly selected for a later confirmed release.
 - Introduced a compact fixed application navigation for the available workbench and source configuration surfaces, so the new default workbench does not hide the source and scope setup flow.
