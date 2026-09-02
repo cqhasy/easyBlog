@@ -1,13 +1,13 @@
 use std::{
     collections::HashMap,
     path::Path,
-    process::Command,
     sync::{Arc, Mutex, OnceLock},
 };
 
 use chrono::{SecondsFormat, Utc};
 
 use crate::{
+    providers::git::{GitCommandError, GitCommands},
     shared::errors::{AppError, AppResult},
     storage::targets::{ConnectedTarget, TargetRepository},
     targets::{Target, TargetState, TargetVisibility},
@@ -44,16 +44,10 @@ pub fn execute(
     let id = uuid::Uuid::new_v4().to_string();
     let workspace_path = workspace_root.join(&id);
     let clone_url = format!("https://github.com/{repository}.git");
-    let cloned = Command::new("git")
-        .args(["clone", &clone_url])
-        .arg(&workspace_path)
-        .output()
-        .map_err(|_| {
-            AppError::new(
-                "git_unavailable",
-                "Git is required to prepare this repository",
-            )
-        })?;
+    let workspace_argument = workspace_path.to_string_lossy().into_owned();
+    let cloned =
+        GitCommands::run_output(workspace_root, &["clone", &clone_url, &workspace_argument])
+            .map_err(git_prepare_error)?;
     if !cloned.status.success() {
         let _ = remove_new_workspace(workspace_root, &workspace_path);
         return Err(AppError::new(
@@ -101,16 +95,8 @@ fn repository_connection_lock(key: &str) -> Arc<Mutex<()>> {
 }
 
 fn fetch_prune(root: &Path) -> AppResult<()> {
-    let output = Command::new("git")
-        .args(["fetch", "--prune", "origin"])
-        .current_dir(root)
-        .output()
-        .map_err(|_| {
-            AppError::new(
-                "git_unavailable",
-                "Git is required to prepare this repository",
-            )
-        })?;
+    let output = GitCommands::run_output(root, &["fetch", "--prune", "origin"])
+        .map_err(git_prepare_error)?;
     if output.status.success() {
         Ok(())
     } else {
@@ -118,6 +104,19 @@ fn fetch_prune(root: &Path) -> AppResult<()> {
             "target_clone_failed",
             "GitHub repository could not be prepared. Check your access and try again.",
         ))
+    }
+}
+
+fn git_prepare_error(error: GitCommandError) -> AppError {
+    match error {
+        GitCommandError::TimedOut => AppError::new(
+            "git_timeout",
+            "GitHub repository preparation timed out. Check your network and try again.",
+        ),
+        _ => AppError::new(
+            "git_unavailable",
+            "Git is required to prepare this repository",
+        ),
     }
 }
 fn validate_repository(repository: &str) -> AppResult<()> {

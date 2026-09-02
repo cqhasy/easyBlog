@@ -33,8 +33,8 @@ pub fn execute(
             "Only a published release can be rolled back",
         ));
     }
-    let checkout = Checkout::acquire(target)
-        .map_err(|_| AppError::new("target_unavailable", "The publishing target is not ready"))?;
+    let checkout =
+        Checkout::acquire(target).map_err(crate::actions::preview_release::checkout_error)?;
     let rollback_sha = if record.state == PublicationState::RollbackPending {
         record.rollback_commit_sha.clone().ok_or_else(|| {
             AppError::new(
@@ -43,14 +43,18 @@ pub fn execute(
             )
         })?
     } else {
-        if crate::providers::git::GitCommands::run(
+        if let Err(error) = crate::providers::git::GitCommands::run(
             checkout.root(),
             &["revert", "--no-edit", &record.commit_sha],
-        )
-        .is_err()
-        {
+        ) {
             let _ =
                 crate::providers::git::GitCommands::run(checkout.root(), &["revert", "--abort"]);
+            if matches!(error, crate::providers::git::GitCommandError::TimedOut) {
+                return Err(AppError::new(
+                    "git_timeout",
+                    "GitHub rollback timed out. Check your network and try again.",
+                ));
+            }
             return Err(AppError::new(
                 "git_revert_failed",
                 "The release commit could not be reverted",

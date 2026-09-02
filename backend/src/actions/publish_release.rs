@@ -49,8 +49,7 @@ pub fn execute(
         .map_err(|_| AppError::new("storage_error", "Changes could not be loaded"))?;
     let selected = preview_release::select_pending_changes(&available, &input.change_ids)?;
     preview_release::validate_publishable_source(&source)?;
-    let checkout = Checkout::acquire(&input.target)
-        .map_err(|_| AppError::new("target_unavailable", "The publishing target is not ready"))?;
+    let checkout = Checkout::acquire(&input.target).map_err(preview_release::checkout_error)?;
     let files = preview_release::build_file_set(&source.path, &input.target, &selected)?;
     stage::apply(checkout.root(), &files)?;
     let commit_sha = commit::create(checkout.root(), "Publish easyBlog release")?;

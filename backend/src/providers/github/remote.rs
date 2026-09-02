@@ -1,4 +1,6 @@
-use std::{path::Path, process::Command};
+use std::path::Path;
+
+use crate::providers::git::GitCommands;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum GithubRemoteError {
@@ -12,20 +14,14 @@ pub struct GithubRemote;
 
 impl GithubRemote {
     pub fn verify(root: &Path) -> Result<(), GithubRemoteError> {
-        let output = Command::new("git")
-            .args(["remote", "get-url", "origin"])
-            .current_dir(root)
-            .output()
+        let output = GitCommands::run_output(root, &["remote", "get-url", "origin"])
             .map_err(|_| GithubRemoteError::MissingOrigin)?;
         if !output.status.success() {
             return Err(GithubRemoteError::MissingOrigin);
         }
         let remote = String::from_utf8_lossy(&output.stdout).trim().to_owned();
         validate_https_remote(&remote)?;
-        let reachable = Command::new("git")
-            .args(["ls-remote", "origin"])
-            .current_dir(root)
-            .output()
+        let reachable = GitCommands::run_output(root, &["ls-remote", "origin"])
             .map_err(|_| GithubRemoteError::Unreadable)?;
         if reachable.status.success() {
             Ok(())
