@@ -21,6 +21,11 @@ pub fn compare(scope_id: &str, previous: &[Snapshot], current: &[Snapshot]) -> V
             if previous.fingerprint != snapshot.fingerprint {
                 changes.push(change(scope_id, ChangeKind::Updated, snapshot, None, true));
             }
+        }
+    }
+
+    for snapshot in current {
+        if previous_by_identity.contains_key(snapshot.source_identity.as_str()) {
             continue;
         }
         if let Some(previous) = previous.iter().find(|previous| {
@@ -114,5 +119,27 @@ mod tests {
         assert!(changes
             .iter()
             .any(|change| change.kind == ChangeKind::Deleted && !change.selected));
+    }
+
+    #[test]
+    fn reserves_same_identity_snapshots_before_detecting_moves() {
+        let previous = vec![snapshot("a.md", "a.md", "one")];
+        let current = vec![
+            snapshot("b.md", "b.md", "one"),
+            snapshot("a.md", "a.md", "two"),
+        ];
+
+        let changes = compare("scope", &previous, &current);
+
+        assert_eq!(changes.len(), 2);
+        assert!(changes
+            .iter()
+            .any(|change| change.kind == ChangeKind::Added && change.source_path == "b.md"));
+        assert!(changes
+            .iter()
+            .any(|change| change.kind == ChangeKind::Updated && change.source_path == "a.md"));
+        assert!(!changes
+            .iter()
+            .any(|change| change.kind == ChangeKind::Moved));
     }
 }

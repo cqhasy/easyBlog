@@ -20,11 +20,12 @@ describe("changes workspace", () => {
     expect(defaultSelectedChanges(changes).map((item) => item.kind)).toEqual(["added", "updated"]);
   });
 
-  it("renders blocked context and an inactive publish action", () => {
-    const html = renderChanges({ status: "ready", scope, changes: [change("blocked")], scannedAt: "2026-09-02T00:00:00Z" });
+  it("renders blocked context and keeps preview disabled until it is implemented", () => {
+    const html = renderChanges({ status: "ready", scope, changes: [change("blocked"), change("added")], scannedAt: "2026-09-02T00:00:00Z" });
     expect(html).toContain("需要处理");
     expect(html).toContain("无法解析内容");
     expect(html).toContain("预览发布</button>");
+    expect(html).toContain('data-action="preview" disabled');
   });
 
   it("loads persisted changes for the first active scope", async () => {
@@ -53,5 +54,17 @@ describe("changes workspace", () => {
 
     expect(applied).toEqual([scope.scope.id]);
     expect(listChanges).toHaveBeenCalledOnce();
+  });
+
+  it("uses the requested scope when refresh is triggered after a scope change", async () => {
+    const anotherScope = { ...scope, scope: { ...scope.scope, id: "scope-2", name: "另一范围" } };
+    const applied: ScopeSummary[] = [];
+    const controller = createChangesRefreshController({ listScopes: async () => [scope, anotherScope], listChanges: async () => [], scanScope: async () => ({ changes: [], scanned_at: "now" }) }, (state) => {
+      if (state.status === "empty") applied.push(state.scope);
+    });
+
+    await controller.refresh(anotherScope.scope.id);
+
+    expect(applied).toEqual([anotherScope]);
   });
 });
