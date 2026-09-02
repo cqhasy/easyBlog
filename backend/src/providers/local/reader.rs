@@ -2,6 +2,8 @@ use std::fs;
 use std::path::Path;
 
 use super::file_tree::{FileMetadata, LocalFile, LocalFileTree};
+use crate::scopes::scope::SourceNodeRef;
+use crate::sources::tree::SourceTreeNode;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LocalReadError {
@@ -63,6 +65,68 @@ impl LocalReader {
             metadata: metadata.1,
             content,
         })
+    }
+
+    pub fn children(&self, parent: Option<&str>) -> Result<Vec<SourceTreeNode>, LocalReadError> {
+        let relative = parent
+            .filter(|value| *value != ".")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_default();
+        let directory = if relative.as_os_str().is_empty() {
+            self.root.clone()
+        } else {
+            self.resolve_path(&relative)?
+        };
+        if !directory.is_dir() {
+            return Err(LocalReadError::InvalidPath);
+        }
+        let mut nodes = Vec::new();
+        let mut entries = fs::read_dir(directory)
+            .map_err(|error| LocalReadError::Io(error.to_string()))?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| LocalReadError::Io(error.to_string()))?;
+        entries.sort_by_key(|entry| entry.file_name());
+        for entry in entries {
+            if entry
+                .file_type()
+                .map_err(|error| LocalReadError::Io(error.to_string()))?
+                .is_symlink()
+            {
+                continue;
+            }
+            let path = entry.path();
+            let relative_path = path
+                .strip_prefix(&self.root)
+                .map_err(|_| LocalReadError::InvalidPath)?;
+            let file_type = entry
+                .file_type()
+                .map_err(|error| LocalReadError::Io(error.to_string()))?;
+            let is_dir = file_type.is_dir();
+            let is_markdown = relative_path
+                .extension()
+                .and_then(|value| value.to_str())
+                .map(|value| matches!(value.to_ascii_lowercase().as_str(), "md" | "markdown"))
+                .unwrap_or(false);
+            if !is_dir && !is_markdown {
+                continue;
+            }
+            let value = relative_path.to_string_lossy().replace('\\', "/");
+            nodes.push(SourceTreeNode {
+                reference: SourceNodeRef {
+                    kind: "local_path".into(),
+                    value,
+                },
+                display_name: entry.file_name().to_string_lossy().into_owned(),
+                kind: if is_dir {
+                    "directory".into()
+                } else {
+                    "markdown".into()
+                },
+                selectable: true,
+                has_children: is_dir,
+            });
+        }
+        Ok(nodes)
     }
 
     fn resolve_path(&self, relative_path: &Path) -> Result<std::path::PathBuf, LocalReadError> {
@@ -258,6 +322,25 @@ mod tests {
         assert_eq!(tree.children[0].relative_path, Path::new("a.md"));
         assert_eq!(tree.children[1].relative_path, Path::new("b"));
         assert_eq!(tree.children[2].relative_path, Path::new("z.txt"));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn returns_direct_children_without_non_markdown_files() {
+        let root = temp_root();
+        fs::create_dir_all(root.join("posts")).unwrap();
+        fs::write(root.join("article.md"), "# article").unwrap();
+        fs::write(root.join("notes.txt"), "ignore").unwrap();
+        let nodes = LocalReader::new(&root).unwrap().children(None).unwrap();
+        assert_eq!(
+            nodes
+                .iter()
+                .map(|node| node.display_name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["article.md", "posts"]
+        );
+        assert_eq!(nodes[0].kind, "markdown");
+        assert!(nodes[1].has_children);
         fs::remove_dir_all(root).unwrap();
     }
 }
