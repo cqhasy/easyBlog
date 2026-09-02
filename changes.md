@@ -2,6 +2,8 @@
 
 ## 2026-09-02
 
+- Hardened GitHub repository connection identity and checkout synchronization: repository names now persist and compare case-insensitively while preserving branch case, failed Target persistence removes its new managed clone, and ready workspaces synchronize only the configured default branch against `origin/<default-branch>`. GitHub authorization and repository reload requests now ignore stale responses and disable repeated reload while pending. The M2 plan now consistently uses one release batch per configured Scope. Shared Git subprocess timeouts, termination, and reaping are tracked separately in #38.
+
 - Hardened GitHub target connection idempotency and feedback: requests for the same repository and branch now serialize in-process, so a concurrent repeat waits and reuses the first successful Target rather than creating a second managed clone. The connection UI now immediately shows preparation progress and disables duplicate submission, repository changes, and reload while Git is working.
 - Fixed the GitHub target connection command boundary: the frontend now sends Tauri's required `defaultBranch` argument rather than the persisted API field name `default_branch`. Previously the command was rejected before it could begin cloning or credential setup.
 - Fixed GitHub authorization and repository connection credentials: browser login uses `gh auth login --web --clipboard`, so the device code is already in the clipboard instead of requiring terminal copy/paste. Before cloning an app-managed workspace, easyBlog now registers the existing `gh` HTTPS Git credential helper through `gh auth setup-git`. The repository-list action is now an interaction-free reload rather than calling the terminal-oriented `gh auth refresh`.

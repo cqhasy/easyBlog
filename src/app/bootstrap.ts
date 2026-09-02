@@ -53,11 +53,16 @@ export function bootstrap(root: HTMLElement | null): void {
     authorizationPanel.innerHTML = `<strong>GitHub</strong><span>${detail}</span>${action}`;
   };
   let githubAuthorization: GithubAuthorization = { state: "unavailable", login: null };
+  let githubAuthorizationGeneration = 0;
   const refreshGithubAuthorization = async (startLogin = false) => {
+    const requestGeneration = ++githubAuthorizationGeneration;
     renderGithubAuthorization(githubAuthorization, startLogin);
     try {
-      githubAuthorization = startLogin ? await startGithubLogin() : await githubAuthorizationStatus();
+      const authorization = startLogin ? await startGithubLogin() : await githubAuthorizationStatus();
+      if (requestGeneration !== githubAuthorizationGeneration) return;
+      githubAuthorization = authorization;
     } catch {
+      if (requestGeneration !== githubAuthorizationGeneration) return;
       githubAuthorization = { state: "unavailable", login: null };
     }
     renderGithubAuthorization(githubAuthorization);

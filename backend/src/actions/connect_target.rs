@@ -25,15 +25,12 @@ pub fn execute(
     input: ConnectTargetInput,
 ) -> AppResult<ConnectedTarget> {
     validate_repository(&input.repository)?;
-    let key = format!(
-        "{}/{}",
-        input.repository.to_ascii_lowercase(),
-        input.default_branch.to_ascii_lowercase()
-    );
+    let repository = canonical_repository(&input.repository);
+    let key = format!("{repository}/{}", input.default_branch);
     let binding = repository_connection_lock(&key);
     let _connection_guard = binding.lock().expect("repository connection lock poisoned");
     if let Some(existing) = targets
-        .find_by_repository(&input.repository, &input.default_branch)
+        .find_by_repository(&repository, &input.default_branch)
         .map_err(storage_error)?
     {
         return Ok(existing);
@@ -46,7 +43,7 @@ pub fn execute(
     })?;
     let id = uuid::Uuid::new_v4().to_string();
     let workspace_path = workspace_root.join(&id);
-    let clone_url = format!("https://github.com/{}.git", input.repository);
+    let clone_url = format!("https://github.com/{repository}.git");
     let cloned = Command::new("git")
         .args(["clone", &clone_url])
         .arg(&workspace_path)
@@ -71,7 +68,7 @@ pub fn execute(
     let target = Target {
         id,
         workspace_path,
-        repository: input.repository.clone(),
+        repository: repository.clone(),
         default_branch: input.default_branch,
         visibility: input.visibility,
         // Connecting a repository must not guess its publishing adapter or content paths.
@@ -79,13 +76,17 @@ pub fn execute(
         layout: Default::default(),
     };
     let connected = ConnectedTarget {
-        name: input.repository,
+        name: repository,
         target,
         created_at: Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true),
     };
-    targets
-        .insert(&connected)
-        .map_err(|_| AppError::new("storage_error", "Publishing target could not be saved"))?;
+    if targets.insert(&connected).is_err() {
+        let _ = remove_new_workspace(workspace_root, &connected.target.workspace_path);
+        return Err(AppError::new(
+            "storage_error",
+            "Publishing target could not be saved",
+        ));
+    }
     Ok(connected)
 }
 
@@ -136,6 +137,10 @@ fn validate_repository(repository: &str) -> AppResult<()> {
         ))
     }
 }
+
+fn canonical_repository(repository: &str) -> String {
+    repository.to_ascii_lowercase()
+}
 fn remove_new_workspace(root: &Path, path: &Path) -> std::io::Result<()> {
     let root = std::fs::canonicalize(root)?;
     if path
@@ -150,4 +155,22 @@ fn remove_new_workspace(root: &Path, path: &Path) -> std::io::Result<()> {
 }
 fn storage_error(_: rusqlite::Error) -> AppError {
     AppError::new("storage_error", "Publishing target could not be loaded")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn canonicalizes_repository_identity_without_changing_branch_identity() {
+        assert_eq!(canonical_repository("Owner/Blog"), "owner/blog");
+        assert_eq!("Main", "Main");
+    }
+
+    #[test]
+    fn rejects_invalid_repository_identity() {
+        assert!(validate_repository("owner/blog").is_ok());
+        assert!(validate_repository("owner/blog/extra").is_err());
+        assert!(validate_repository("owner/invalid name").is_err());
+    }
 }

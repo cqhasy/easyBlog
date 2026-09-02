@@ -73,6 +73,26 @@ export function createSourcesRefreshController(
   return { begin, isCurrent, refresh };
 }
 
+export function createRepositoryRefreshController(
+  load: () => Promise<GithubRepository[]>,
+  apply: (repositories: GithubRepository[]) => void,
+): { refresh: () => Promise<void>; isLoading: () => boolean } {
+  let loading = false;
+  let generation = 0;
+  const refresh = async () => {
+    if (loading) return;
+    const requestGeneration = ++generation;
+    loading = true;
+    try {
+      const repositories = await load();
+      if (requestGeneration === generation) apply(repositories);
+    } finally {
+      if (requestGeneration === generation) loading = false;
+    }
+  };
+  return { refresh, isLoading: () => loading };
+}
+
 function escapeHtml(value: string): string {
   return value.replace(/[&<>\"']/g, (character) =>
     ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[character] ?? character,
@@ -164,6 +184,7 @@ export function mountSources(
   let selectedRepository = "";
   let targetMessage = "";
   let connectingTarget = false;
+  let repositoriesLoading = false;
   const render = () => {
     if (state.status !== "ready") {
       root.innerHTML = renderSources(state);
@@ -172,7 +193,29 @@ export function mountSources(
     const repositoryOptions = repositories.length ? repositories.map((repo) => `<option value="${escapeHtml(repo.repository)}" ${repo.repository === selectedRepository ? "selected" : ""}>${escapeHtml(repo.repository)} · ${repo.visibility === "private" ? "私有" : "公开"} · ${escapeHtml(repo.default_branch)}</option>`).join("") : '<option value="">没有可连接的仓库</option>';
     const targetRows = targets.map((target) => `<li><span><strong>${escapeHtml(target.repository)}</strong><small>${escapeHtml(target.default_branch)} · ${target.visibility === "private" ? "私有" : "公开"}</small></span><small>${target.state === "needs_configuration" ? "已连接，等待配置发布规则" : target.state === "ready" ? "已准备，可绑定范围" : "需要重新连接或修复"}</small></li>`).join("");
     const connectionDisabled = connectingTarget || !selectedRepository ? "disabled" : "";
-    root.innerHTML = `<section class="sources-page scope-app" aria-labelledby="sources-title"><header class="workspace-header"><div><p class="eyebrow">EASYBLOG / SOURCES</p><h1 id="sources-title">内容来源</h1><p class="sources-subtitle">整理本地内容，并定义每个目录的同步范围。</p></div><form class="source-form compact-source-form" id="add-source-form"><label class="compact-source-field"><span class="visually-hidden">目录路径</span><input name="path" required aria-label="目录路径" placeholder="本地目录路径" /></label><label class="compact-source-field source-name-field"><span class="visually-hidden">显示名称</span><input name="name" aria-label="显示名称（可选）" placeholder="显示名称（可选）" /></label><button type="submit">添加来源</button></form></header><section class="target-connect"><div><strong>GitHub 发布目标</strong><span>${targets.length ? `${targets.length} 个已连接` : "选择仓库后由 easyBlog 自动准备"}</span></div><form id="connect-target-form"><select name="repository" aria-label="GitHub 仓库" ${connectingTarget ? "disabled" : ""}>${repositoryOptions}</select><button type="button" class="secondary-button" data-action="refresh-repositories" ${connectingTarget ? "disabled" : ""}>重新加载</button><button type="submit" ${connectionDisabled}>${connectingTarget ? "正在连接..." : "连接仓库"}</button></form>${targetMessage ? `<p class="target-message" role="status">${escapeHtml(targetMessage)}</p>` : ""}${targetRows ? `<ul class="target-list">${targetRows}</ul>` : ""}</section><div class="scope-workspace"><main class="scope-sidebar"><div class="sidebar-heading"><div><span>来源目录</span><small>${state.sources.length} 个来源</small></div></div>${state.sources.map((source) => renderScopeList(source, scopes)).join("")}</main>${renderEditor(editor, targets)}</div></section>`;
+    root.innerHTML = `<section class="sources-page scope-app" aria-labelledby="sources-title"><header class="workspace-header"><div><p class="eyebrow">EASYBLOG / SOURCES</p><h1 id="sources-title">内容来源</h1><p class="sources-subtitle">整理本地内容，并定义每个目录的同步范围。</p></div><form class="source-form compact-source-form" id="add-source-form"><label class="compact-source-field"><span class="visually-hidden">目录路径</span><input name="path" required aria-label="目录路径" placeholder="本地目录路径" /></label><label class="compact-source-field source-name-field"><span class="visually-hidden">显示名称</span><input name="name" aria-label="显示名称（可选）" placeholder="显示名称（可选）" /></label><button type="submit">添加来源</button></form></header><section class="target-connect"><div><strong>GitHub 发布目标</strong><span>${targets.length ? `${targets.length} 个已连接` : "选择仓库后由 easyBlog 自动准备"}</span></div><form id="connect-target-form"><select name="repository" aria-label="GitHub 仓库" ${connectingTarget || repositoriesLoading ? "disabled" : ""}>${repositoryOptions}</select><button type="button" class="secondary-button" data-action="refresh-repositories" ${connectingTarget || repositoriesLoading ? "disabled" : ""}>${repositoriesLoading ? "正在加载..." : "重新加载"}</button><button type="submit" ${connectionDisabled}>${connectingTarget ? "正在连接..." : "连接仓库"}</button></form>${targetMessage ? `<p class="target-message" role="status">${escapeHtml(targetMessage)}</p>` : ""}${targetRows ? `<ul class="target-list">${targetRows}</ul>` : ""}</section><div class="scope-workspace"><main class="scope-sidebar"><div class="sidebar-heading"><div><span>来源目录</span><small>${state.sources.length} 个来源</small></div></div>${state.sources.map((source) => renderScopeList(source, scopes)).join("")}</main>${renderEditor(editor, targets)}</div></section>`;
+  };
+  const repositoryRefreshController = createRepositoryRefreshController(
+    () => api.refreshGithubRepositoryPermissions?.() ?? api.listGithubRepositories?.() ?? Promise.resolve([]),
+    (items) => {
+      repositories = items;
+      selectedRepository = items.some((item) => item.repository === selectedRepository) ? selectedRepository : (items[0]?.repository ?? "");
+      targetMessage = items.length ? "GitHub 仓库已重新加载。" : "没有发现可推送的仓库。";
+    },
+  );
+  const reloadRepositories = async () => {
+    if (repositoryRefreshController.isLoading()) return;
+    repositoriesLoading = true;
+    targetMessage = "正在重新加载 GitHub 仓库...";
+    render();
+    try {
+      await repositoryRefreshController.refresh();
+    } catch (error) {
+      targetMessage = errorMessage(error, "GitHub 仓库无法重新加载");
+    } finally {
+      repositoriesLoading = false;
+      render();
+    }
   };
   const refreshController = createSourcesRefreshController(api, (nextState) => {
     state = nextState;
@@ -241,7 +284,7 @@ export function mountSources(
     if (!target) return;
     const action = target.dataset.action;
     if (action === "retry") { void refreshController.refresh(); return; }
-    if (action === "refresh-repositories" && api.refreshGithubRepositoryPermissions) { targetMessage = "正在重新加载 GitHub 仓库..."; render(); void api.refreshGithubRepositoryPermissions().then((items) => { repositories = items; selectedRepository = items[0]?.repository ?? ""; targetMessage = items.length ? "GitHub 仓库已重新加载。" : "没有发现可推送的仓库。"; }).catch((error) => { targetMessage = errorMessage(error, "GitHub 仓库无法重新加载"); }).finally(render); return; }
+    if (action === "refresh-repositories") { void reloadRepositories(); return; }
     const source = state.status === "ready" ? state.sources.find((item) => item.id === target.dataset.sourceId) : undefined;
     if (action === "new-scope" && source) { editor = editorFor(source); render(); void loadChildren(editor, ".", api, render); return; }
     if (action === "edit-scope" && source) { const summary = scopes.find((item) => item.scope.id === target.dataset.scopeId); if (summary) { editor = editorFor(source, summary.scope); render(); void loadChildren(editor, ".", api, render); } return; }
@@ -285,7 +328,7 @@ export function mountSources(
     if (rules && input.dataset.ruleIndex !== undefined) rules[Number(input.dataset.ruleIndex)] = input.value;
   });
   render();
-  void refreshController.refresh().then(async () => { [scopes, targets, repositories] = await Promise.all([api.listScopes?.() ?? Promise.resolve([]), api.listTargets?.() ?? Promise.resolve([]), (api.listGithubRepositories?.() ?? Promise.resolve([])).catch(() => [])]); selectedRepository = repositories[0]?.repository ?? ""; render(); });
+  void refreshController.refresh().then(async () => { [scopes, targets] = await Promise.all([api.listScopes?.() ?? Promise.resolve([]), api.listTargets?.() ?? Promise.resolve([])]); render(); await reloadRepositories(); });
 }
 
 function toggleSelection(editor: EditorState, node: SourceNodeRef, displayName: string, isDirectory: boolean, selected: boolean): void { const key = selectionKey(node); const index = editor.selections.findIndex((selection) => selectionKey(selection.node) === key); if (selected && index < 0) editor.selections.push({ node, display_name: displayName, recursive: isDirectory }); if (!selected && index >= 0) editor.selections.splice(index, 1); }

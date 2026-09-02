@@ -99,7 +99,10 @@ fn migrate_target_metadata(connection: &Connection) -> Result<()> {
         }
     }
     connection.execute("UPDATE targets SET repository = COALESCE(repository, 'Legacy local repository'), default_branch = COALESCE(default_branch, ''), visibility = COALESCE(visibility, 'private'), target_state = COALESCE(target_state, 'needs_reconnect')", [])?;
-    connection.execute("CREATE UNIQUE INDEX IF NOT EXISTS targets_repository_branch ON targets(repository, default_branch) WHERE repository != 'Legacy local repository'", [])?;
+    connection.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS targets_repository_branch ON targets(repository COLLATE NOCASE, default_branch) WHERE repository != 'Legacy local repository'",
+        [],
+    )?;
     Ok(())
 }
 

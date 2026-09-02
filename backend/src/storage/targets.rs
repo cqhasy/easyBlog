@@ -61,7 +61,7 @@ impl TargetRepository {
             .connection
             .lock()
             .expect("target repository lock poisoned");
-        connection.query_row("SELECT id, workspace_path, name, posts_directory, resources_directory, created_at, repository, default_branch, visibility, target_state FROM targets WHERE repository = ?1 AND default_branch = ?2", params![repository, default_branch], row).optional()
+        connection.query_row("SELECT id, workspace_path, name, posts_directory, resources_directory, created_at, repository, default_branch, visibility, target_state FROM targets WHERE repository = ?1 COLLATE NOCASE AND default_branch = ?2", params![repository, default_branch], row).optional()
     }
 
     pub fn update(&self, target: &ConnectedTarget) -> Result<()> {
@@ -133,5 +133,25 @@ mod tests {
         };
         repo.insert(&target).unwrap();
         assert_eq!(repo.list().unwrap(), vec![target]);
+    }
+
+    #[test]
+    fn finds_repository_case_insensitively_while_preserving_branch_case() {
+        let repo = TargetRepository::open(":memory:").unwrap();
+        let mut target = Target::new("target-1", "C:/blog");
+        target.repository = "owner/blog".into();
+        target.default_branch = "Main".into();
+        let connected = ConnectedTarget {
+            target,
+            name: "owner/blog".into(),
+            created_at: "2026-09-02T00:00:00Z".into(),
+        };
+        repo.insert(&connected).unwrap();
+
+        assert_eq!(
+            repo.find_by_repository("Owner/Blog", "Main").unwrap(),
+            Some(connected)
+        );
+        assert_eq!(repo.find_by_repository("owner/blog", "main").unwrap(), None);
     }
 }
