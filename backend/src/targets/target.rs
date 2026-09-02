@@ -8,7 +8,12 @@ use super::layout::PagesLayout;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Target {
     pub id: TargetId,
+    #[serde(skip_serializing)]
     pub workspace_path: PathBuf,
+    pub repository: String,
+    pub default_branch: String,
+    pub visibility: TargetVisibility,
+    pub state: TargetState,
     #[serde(default)]
     pub layout: PagesLayout,
 }
@@ -18,6 +23,10 @@ impl Target {
         Self {
             id: id.into(),
             workspace_path: workspace_path.into(),
+            repository: "Legacy local repository".into(),
+            default_branch: "".into(),
+            visibility: TargetVisibility::Private,
+            state: TargetState::NeedsReconnect,
             layout: PagesLayout::default(),
         }
     }
@@ -25,4 +34,20 @@ impl Target {
     pub fn path(&self) -> &Path {
         &self.workspace_path
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TargetVisibility {
+    Public,
+    Private,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TargetState {
+    Ready,
+    NeedsInitialization,
+    NeedsRecovery,
+    NeedsReconnect,
 }

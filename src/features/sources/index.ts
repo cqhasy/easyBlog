@@ -1,7 +1,7 @@
 import { addSource, getSourceChildren, listScopes, listSources, saveScope, setScopeLifecycle } from "../../bridge/sources";
-import { connectTarget, listTargets } from "../../bridge/targets";
+import { connectTarget, initializeTarget, listGithubRepositories, listTargets, refreshGithubRepositoryPermissions } from "../../bridge/targets";
 import type { AddSourceInput } from "../../bridge/sources";
-import type { ConnectedTarget, SaveScopeInput, Scope, ScopeLifecycle, ScopeSelection, ScopeSummary, Source, SourceNodeRef, SourceTreeNode } from "../../contracts";
+import type { ConnectedTarget, GithubRepository, SaveScopeInput, Scope, ScopeLifecycle, ScopeSelection, ScopeSummary, Source, SourceNodeRef, SourceTreeNode } from "../../contracts";
 
 export const sourcesFeature = "sources";
 
@@ -13,7 +13,10 @@ export type SourcesApi = {
   setScopeLifecycle?: (scopeId: string, lifecycle: ScopeLifecycle, expectedRevision: number) => Promise<ScopeSummary>;
   getSourceChildren?: (sourceId: string, parent?: SourceNodeRef) => Promise<SourceTreeNode[]>;
   listTargets?: () => Promise<ConnectedTarget[]>;
-  connectTarget?: (input: { workspace_path: string; name?: string }) => Promise<ConnectedTarget>;
+  listGithubRepositories?: () => Promise<GithubRepository[]>;
+  refreshGithubRepositoryPermissions?: () => Promise<GithubRepository[]>;
+  connectTarget?: (input: GithubRepository) => Promise<ConnectedTarget>;
+  initializeTarget?: (targetId: string) => Promise<ConnectedTarget>;
 };
 
 export type SourcesState =
@@ -145,25 +148,32 @@ function renderEditor(editor: EditorState | undefined, targets: ConnectedTarget[
   const scope = editor.scope;
   const lifecycleDisabled = editor.lifecyclePending ? "disabled" : "";
   const lifecycleLabel = editor.lifecyclePending ? "正在更新..." : scope?.lifecycle === "paused" ? "恢复" : "暂停";
-  const targetOptions = [`<option value="">暂不绑定</option>`, ...targets.map((target) => `<option value="${escapeHtml(target.id)}" ${scope?.target_id === target.id ? "selected" : ""}>${escapeHtml(target.name)} · ${escapeHtml(formatSourcePath(target.workspace_path))}</option>`)].join("");
-  return `<aside class="scope-editor" aria-label="同步范围编辑器"><header><div><p class="eyebrow">SYNC SCOPE</p><h2>${scope ? "编辑同步范围" : "新建同步范围"}</h2><p>${escapeHtml(editor.source.name)}</p></div><button class="icon-button close-button" type="button" data-action="close-editor" aria-label="关闭编辑器" title="关闭">x</button></header><form id="scope-form"><section class="editor-section scope-name-section"><label>范围名称<input name="scope-name" required value="${escapeHtml(scope?.name ?? `${editor.source.name} 同步范围`)}" /></label></section><section class="editor-section target-section"><div><h3>发布目标</h3><p>选择已连接的 GitHub Pages 本地仓库。</p></div><select name="target-id">${targetOptions}</select></section><section class="editor-section selection-section"><div class="section-heading"><div><h3>同步内容</h3><p>选择目录或单篇 Markdown 文件。</p></div></div><div class="scope-root"><label><input type="checkbox" data-action="toggle-root" ${editor.selections.some((selection) => selection.node.value === ".") ? "checked" : ""} /><span><strong>整个来源</strong><small>包含来源中的所有 Markdown 文件</small></span></label></div><div class="source-tree">${renderTree(editor)}</div></section><section class="editor-section rules-section"><div><h3>包含规则</h3><p>只同步符合这些路径规则的内容。</p></div>${renderRuleRows("include", editor.includePatterns)}</section><section class="editor-section rules-section"><div><h3>排除规则</h3><p>排除规则优先于包含规则。</p></div>${renderRuleRows("exclude", editor.excludePatterns)}</section>${editor.error ? `<p class="editor-error" role="alert">${escapeHtml(editor.error)}</p>` : ""}<footer><p class="scope-note">目标仓库须已配置可用的 Git 推送认证。</p><div class="editor-actions"><button type="submit">保存范围</button>${scope ? `<button class="secondary-button" type="button" data-action="toggle-lifecycle" ${lifecycleDisabled}>${lifecycleLabel}</button><button class="danger-button" type="button" data-action="delete-scope" ${lifecycleDisabled}>删除</button>` : ""}</div></footer></form></aside>`;
+  const targetOptions = [`<option value="">暂不绑定</option>`, ...targets.map((target) => `<option value="${escapeHtml(target.id)}" ${target.state !== "ready" ? "disabled" : ""} ${scope?.target_id === target.id ? "selected" : ""}>${escapeHtml(target.repository)}${target.state === "needs_initialization" ? "（待初始化）" : target.state !== "ready" ? "（需修复）" : ""}</option>`)].join("");
+  return `<aside class="scope-editor" aria-label="同步范围编辑器"><header><div><p class="eyebrow">SYNC SCOPE</p><h2>${scope ? "编辑同步范围" : "新建同步范围"}</h2><p>${escapeHtml(editor.source.name)}</p></div><button class="icon-button close-button" type="button" data-action="close-editor" aria-label="关闭编辑器" title="关闭">x</button></header><form id="scope-form"><section class="editor-section scope-name-section"><label>范围名称<input name="scope-name" required value="${escapeHtml(scope?.name ?? `${editor.source.name} 同步范围`)}" /></label></section><section class="editor-section target-section"><div><h3>发布目标</h3><p>选择已准备好的 GitHub 仓库。</p></div><select name="target-id">${targetOptions}</select></section><section class="editor-section selection-section"><div class="section-heading"><div><h3>同步内容</h3><p>选择目录或单篇 Markdown 文件。</p></div></div><div class="scope-root"><label><input type="checkbox" data-action="toggle-root" ${editor.selections.some((selection) => selection.node.value === ".") ? "checked" : ""} /><span><strong>整个来源</strong><small>包含来源中的所有 Markdown 文件</small></span></label></div><div class="source-tree">${renderTree(editor)}</div></section><section class="editor-section rules-section"><div><h3>包含规则</h3><p>只同步符合这些路径规则的内容。</p></div>${renderRuleRows("include", editor.includePatterns)}</section><section class="editor-section rules-section"><div><h3>排除规则</h3><p>排除规则优先于包含规则。</p></div>${renderRuleRows("exclude", editor.excludePatterns)}</section>${editor.error ? `<p class="editor-error" role="alert">${escapeHtml(editor.error)}</p>` : ""}<footer><p class="scope-note">easyBlog 会在应用管理的工作区中安全同步此仓库。</p><div class="editor-actions"><button type="submit">保存范围</button>${scope ? `<button class="secondary-button" type="button" data-action="toggle-lifecycle" ${lifecycleDisabled}>${lifecycleLabel}</button><button class="danger-button" type="button" data-action="delete-scope" ${lifecycleDisabled}>删除</button>` : ""}</div></footer></form></aside>`;
 }
 
 export function mountSources(
   root: HTMLElement,
-  api: SourcesApi = { listSources, addSource, listScopes, saveScope, setScopeLifecycle, getSourceChildren, listTargets, connectTarget },
+  api: SourcesApi = { listSources, addSource, listScopes, saveScope, setScopeLifecycle, getSourceChildren, listTargets, listGithubRepositories, refreshGithubRepositoryPermissions, connectTarget, initializeTarget },
   onScopesChanged: () => void = () => undefined,
 ): void {
   let state: SourcesState = { status: "loading" };
   let scopes: ScopeSummary[] = [];
   let editor: EditorState | undefined;
   let targets: ConnectedTarget[] = [];
+  let repositories: GithubRepository[] = [];
+  let selectedRepository = "";
+  let targetMessage = "";
+  let connectingTarget = false;
   const render = () => {
     if (state.status !== "ready") {
       root.innerHTML = renderSources(state);
       return;
     }
-    root.innerHTML = `<section class="sources-page scope-app" aria-labelledby="sources-title"><header class="workspace-header"><div><p class="eyebrow">EASYBLOG / SOURCES</p><h1 id="sources-title">内容来源</h1><p class="sources-subtitle">整理本地内容，并定义每个目录的同步范围。</p></div><form class="source-form compact-source-form" id="add-source-form"><label class="compact-source-field"><span class="visually-hidden">目录路径</span><input name="path" required aria-label="目录路径" placeholder="本地目录路径" /></label><label class="compact-source-field source-name-field"><span class="visually-hidden">显示名称</span><input name="name" aria-label="显示名称（可选）" placeholder="显示名称（可选）" /></label><button type="submit">添加来源</button></form></header><section class="target-connect"><div><strong>GitHub Pages 发布目标</strong><span>${targets.length ? `${targets.length} 个已连接` : "尚未连接"}</span></div><form id="connect-target-form"><input name="workspace-path" required aria-label="GitHub Pages 本地仓库路径" placeholder="GitHub Pages 本地仓库路径" /><input name="target-name" aria-label="目标名称（可选）" placeholder="目标名称（可选）" /><button type="submit">连接仓库</button></form></section><div class="scope-workspace"><main class="scope-sidebar"><div class="sidebar-heading"><div><span>来源目录</span><small>${state.sources.length} 个来源</small></div></div>${state.sources.map((source) => renderScopeList(source, scopes)).join("")}</main>${renderEditor(editor, targets)}</div></section>`;
+    const repositoryOptions = repositories.length ? repositories.map((repo) => `<option value="${escapeHtml(repo.repository)}" ${repo.repository === selectedRepository ? "selected" : ""}>${escapeHtml(repo.repository)} · ${repo.visibility === "private" ? "私有" : "公开"} · ${escapeHtml(repo.default_branch)}</option>`).join("") : '<option value="">没有可连接的仓库</option>';
+    const targetRows = targets.map((target) => `<li><span><strong>${escapeHtml(target.repository)}</strong><small>${escapeHtml(target.default_branch)} · ${target.visibility === "private" ? "私有" : "公开"}</small></span>${target.state === "needs_initialization" ? `<button type="button" class="secondary-button" data-action="initialize-target" data-target-id="${escapeHtml(target.id)}">初始化博客结构</button>` : `<small>${target.state === "ready" ? "已准备，可绑定范围" : "需要重新连接或修复"}</small>`}</li>`).join("");
+    const connectionDisabled = connectingTarget || !selectedRepository ? "disabled" : "";
+    root.innerHTML = `<section class="sources-page scope-app" aria-labelledby="sources-title"><header class="workspace-header"><div><p class="eyebrow">EASYBLOG / SOURCES</p><h1 id="sources-title">内容来源</h1><p class="sources-subtitle">整理本地内容，并定义每个目录的同步范围。</p></div><form class="source-form compact-source-form" id="add-source-form"><label class="compact-source-field"><span class="visually-hidden">目录路径</span><input name="path" required aria-label="目录路径" placeholder="本地目录路径" /></label><label class="compact-source-field source-name-field"><span class="visually-hidden">显示名称</span><input name="name" aria-label="显示名称（可选）" placeholder="显示名称（可选）" /></label><button type="submit">添加来源</button></form></header><section class="target-connect"><div><strong>GitHub 发布目标</strong><span>${targets.length ? `${targets.length} 个已连接` : "选择仓库后由 easyBlog 自动准备"}</span></div><form id="connect-target-form"><select name="repository" aria-label="GitHub 仓库" ${connectingTarget ? "disabled" : ""}>${repositoryOptions}</select><button type="button" class="secondary-button" data-action="refresh-repositories" ${connectingTarget ? "disabled" : ""}>重新加载</button><button type="submit" ${connectionDisabled}>${connectingTarget ? "正在连接..." : "连接仓库"}</button></form>${targetMessage ? `<p class="target-message" role="status">${escapeHtml(targetMessage)}</p>` : ""}${targetRows ? `<ul class="target-list">${targetRows}</ul>` : ""}</section><div class="scope-workspace"><main class="scope-sidebar"><div class="sidebar-heading"><div><span>来源目录</span><small>${state.sources.length} 个来源</small></div></div>${state.sources.map((source) => renderScopeList(source, scopes)).join("")}</main>${renderEditor(editor, targets)}</div></section>`;
   };
   const refreshController = createSourcesRefreshController(api, (nextState) => {
     state = nextState;
@@ -186,13 +196,19 @@ export function mountSources(
     }
     if (event.target instanceof HTMLFormElement && event.target.id === "connect-target-form" && api.connectTarget) {
       event.preventDefault();
-      const data = new FormData(event.target);
+      if (connectingTarget) return;
+      const repository = repositories.find((item) => item.repository === selectedRepository);
+      if (!repository) return;
+      connectingTarget = true;
+      targetMessage = `正在准备 ${repository.repository}，这可能需要一点时间...`;
+      render();
       try {
-        const connected = await api.connectTarget({ workspace_path: String(data.get("workspace-path") ?? ""), name: String(data.get("target-name") ?? "") || undefined });
-        targets = [...targets, connected];
-        event.target.reset();
-      } catch (error) { if (editor) editor.error = errorMessage(error, "GitHub Pages 仓库无法连接"); }
-      render(); return;
+        const connected = await api.connectTarget(repository);
+        targets = [...targets.filter((item) => item.id !== connected.id), connected];
+        targetMessage = connected.state === "needs_initialization" ? "仓库已连接。初始化结构后即可绑定范围。" : "仓库已准备好，现在可以在范围中绑定它。";
+      } catch (error) { targetMessage = errorMessage(error, "GitHub 仓库无法连接"); }
+      finally { connectingTarget = false; render(); }
+      return;
     }
     const form = event.target;
     if (!(form instanceof HTMLFormElement) || form.id !== "add-source-form" || !api.addSource) return;
@@ -226,6 +242,8 @@ export function mountSources(
     if (!target) return;
     const action = target.dataset.action;
     if (action === "retry") { void refreshController.refresh(); return; }
+    if (action === "refresh-repositories" && api.refreshGithubRepositoryPermissions) { targetMessage = "正在重新加载 GitHub 仓库..."; render(); void api.refreshGithubRepositoryPermissions().then((items) => { repositories = items; selectedRepository = items[0]?.repository ?? ""; targetMessage = items.length ? "GitHub 仓库已重新加载。" : "没有发现可推送的仓库。"; }).catch((error) => { targetMessage = errorMessage(error, "GitHub 仓库无法重新加载"); }).finally(render); return; }
+    if (action === "initialize-target" && target.dataset.targetId && api.initializeTarget) { targetMessage = "正在初始化并推送博客结构..."; render(); void api.initializeTarget(target.dataset.targetId).then((connected) => { targets = targets.map((item) => item.id === connected.id ? connected : item); targetMessage = "博客结构已初始化，现在可以绑定范围。"; }).catch((error) => { targetMessage = errorMessage(error, "博客结构无法初始化"); }).finally(render); return; }
     const source = state.status === "ready" ? state.sources.find((item) => item.id === target.dataset.sourceId) : undefined;
     if (action === "new-scope" && source) { editor = editorFor(source); render(); void loadChildren(editor, ".", api, render); return; }
     if (action === "edit-scope" && source) { const summary = scopes.find((item) => item.scope.id === target.dataset.scopeId); if (summary) { editor = editorFor(source, summary.scope); render(); void loadChildren(editor, ".", api, render); } return; }
@@ -258,6 +276,7 @@ export function mountSources(
   });
   root.addEventListener("change", (event) => {
     const input = event.target as HTMLInputElement;
+    if (input instanceof HTMLSelectElement && input.name === "repository") { selectedRepository = input.value; render(); return; }
     if (!editor || !(input instanceof HTMLInputElement)) return;
     const action = input.dataset.action;
     const path = input.dataset.path;
@@ -268,7 +287,7 @@ export function mountSources(
     if (rules && input.dataset.ruleIndex !== undefined) rules[Number(input.dataset.ruleIndex)] = input.value;
   });
   render();
-  void refreshController.refresh().then(async () => { [scopes, targets] = await Promise.all([api.listScopes?.() ?? Promise.resolve([]), api.listTargets?.() ?? Promise.resolve([])]); render(); });
+  void refreshController.refresh().then(async () => { [scopes, targets, repositories] = await Promise.all([api.listScopes?.() ?? Promise.resolve([]), api.listTargets?.() ?? Promise.resolve([]), (api.listGithubRepositories?.() ?? Promise.resolve([])).catch(() => [])]); selectedRepository = repositories[0]?.repository ?? ""; render(); });
 }
 
 function toggleSelection(editor: EditorState, node: SourceNodeRef, displayName: string, isDirectory: boolean, selected: boolean): void { const key = selectionKey(node); const index = editor.selections.findIndex((selection) => selectionKey(selection.node) === key); if (selected && index < 0) editor.selections.push({ node, display_name: displayName, recursive: isDirectory }); if (!selected && index >= 0) editor.selections.splice(index, 1); }

@@ -22,6 +22,7 @@ pub async fn preview_release(
     let changes = state.changes.clone();
     let targets = state.targets.clone();
     tauri::async_runtime::spawn_blocking(move || {
+        actions::github_auth::require_ready()?;
         let target = target_for_scope(&scopes, &targets, &input.scope_id)?;
         actions::preview_release::execute(
             &sources,
@@ -60,6 +61,7 @@ pub async fn publish_release(
     let publications = state.publications.clone();
     let targets = state.targets.clone();
     tauri::async_runtime::spawn_blocking(move || {
+        actions::github_auth::require_ready()?;
         let target = target_for_scope(&scopes, &targets, &input.scope_id)?;
         actions::publish_release::execute(
             &sources,

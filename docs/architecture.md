@@ -14,9 +14,9 @@ easyBlog 是一个单用户、单机、本地优先的 Tauri 桌面应用：从�
 - **Snapshot**：某次检测时来源和目标的状态快照。
 - **Change**：由快照比较得到的新增、修改、删除、移动或冲突。
 - **ReleaseBatch**：用户确认后的一组发布操作，可按文章、来源或目录拆分。
-- **TargetWorkspace**：本地 Git 工作副本，负责目标结构检查、文件生成、diff、提交和推送。
+- **TargetWorkspace**：由 easyBlog 在应用数据目录管理的 Git 工作副本。用户选择 GitHub 仓库而非本地路径；工作副本负责目标结构检查、文件生成、diff、提交和推送，绝不复用或修改用户已有 clone。
 - **Publication**：一次发布记录，关联批次、commit SHA、文件变更和结果。
-- **Credential**：由系统安全存储管理的飞书或 GitHub 凭证，不进入 SQLite。
+- **Credential**：飞书凭证由系统安全存储管理；GitHub 首版凭证由本机 GitHub CLI 管理。两者都不进入 SQLite。
 
 ## 3. 总体分层
 

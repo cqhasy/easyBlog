@@ -1,90 +1,256 @@
+use std::{
+    collections::HashMap,
+    path::Path,
+    process::Command,
+    sync::{Arc, Mutex, OnceLock},
+};
+
+use chrono::{SecondsFormat, Utc};
+
 use crate::{
     shared::errors::{AppError, AppResult},
     storage::targets::{ConnectedTarget, TargetRepository},
-    targets::{check, Target, TargetCheck, TargetCheckError},
+    targets::{check, Target, TargetCheck, TargetState, TargetVisibility},
 };
-use chrono::{SecondsFormat, Utc};
+
+pub struct ConnectTargetInput {
+    pub repository: String,
+    pub default_branch: String,
+    pub visibility: TargetVisibility,
+}
 
 pub fn execute(
     targets: &TargetRepository,
-    workspace_path: String,
-    name: Option<String>,
+    workspace_root: &Path,
+    input: ConnectTargetInput,
 ) -> AppResult<ConnectedTarget> {
-    let canonical = std::fs::canonicalize(&workspace_path).map_err(|_| {
+    validate_repository(&input.repository)?;
+    let key = format!(
+        "{}/{}",
+        input.repository.to_ascii_lowercase(),
+        input.default_branch.to_ascii_lowercase()
+    );
+    let binding = repository_connection_lock(&key);
+    let _connection_guard = binding.lock().expect("repository connection lock poisoned");
+    if let Some(existing) = targets
+        .find_by_repository(&input.repository, &input.default_branch)
+        .map_err(storage_error)?
+    {
+        return Ok(existing);
+    }
+    std::fs::create_dir_all(workspace_root).map_err(|_| {
         AppError::new(
-            "target_workspace_missing",
-            "Target folder does not exist or cannot be read",
+            "workspace_unavailable",
+            "easyBlog workspace could not be prepared",
         )
     })?;
-    let target = Target::new(uuid::Uuid::new_v4().to_string(), canonical);
-    match check(&target) {
-        TargetCheck::Ready { .. } => {}
-        TargetCheck::Unsupported { reason } => return Err(check_error(reason)),
+    let id = uuid::Uuid::new_v4().to_string();
+    let workspace_path = workspace_root.join(&id);
+    let clone_url = format!("https://github.com/{}.git", input.repository);
+    let cloned = Command::new("git")
+        .args(["clone", &clone_url])
+        .arg(&workspace_path)
+        .output()
+        .map_err(|_| {
+            AppError::new(
+                "git_unavailable",
+                "Git is required to prepare this repository",
+            )
+        })?;
+    if !cloned.status.success() {
+        let _ = remove_new_workspace(workspace_root, &workspace_path);
+        return Err(AppError::new(
+            "target_clone_failed",
+            "GitHub repository could not be prepared. Check your access and try again.",
+        ));
     }
-    let derived_name = target
-        .workspace_path
-        .file_name()
-        .and_then(|value| value.to_str())
-        .filter(|value| !value.is_empty())
-        .unwrap_or("GitHub Pages")
-        .to_owned();
+    if let Err(error) = fetch_prune(&workspace_path) {
+        let _ = remove_new_workspace(workspace_root, &workspace_path);
+        return Err(error);
+    }
+    let mut target = Target {
+        id,
+        workspace_path,
+        repository: input.repository.clone(),
+        default_branch: input.default_branch,
+        visibility: input.visibility,
+        state: TargetState::Ready,
+        layout: Default::default(),
+    };
+    target.state = match check(&target) {
+        TargetCheck::Ready { .. } => TargetState::Ready,
+        TargetCheck::NeedsInitialization => TargetState::NeedsInitialization,
+        TargetCheck::Unsupported { .. } => TargetState::NeedsRecovery,
+    };
     let connected = ConnectedTarget {
+        name: input.repository,
         target,
-        name: name
-            .unwrap_or_default()
-            .trim()
-            .to_owned()
-            .if_empty(derived_name),
         created_at: Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true),
     };
-    targets.insert(&connected).map_err(|error| {
-        if error
-            .to_string()
-            .contains("UNIQUE constraint failed: targets.workspace_path")
-        {
-            AppError::new(
-                "duplicate_target",
-                "This GitHub Pages repository is already connected",
-            )
-        } else {
-            AppError::new("storage_error", "Publishing target could not be saved")
-        }
-    })?;
+    targets
+        .insert(&connected)
+        .map_err(|_| AppError::new("storage_error", "Publishing target could not be saved"))?;
     Ok(connected)
 }
 
-trait IfEmpty {
-    fn if_empty(self, fallback: String) -> String;
+fn repository_connection_lock(key: &str) -> Arc<Mutex<()>> {
+    static LOCKS: OnceLock<Mutex<HashMap<String, Arc<Mutex<()>>>>> = OnceLock::new();
+    let locks = LOCKS.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut locks = locks.lock().expect("repository connection locks poisoned");
+    locks
+        .entry(key.to_owned())
+        .or_insert_with(|| Arc::new(Mutex::new(())))
+        .clone()
 }
-impl IfEmpty for String {
-    fn if_empty(self, fallback: String) -> String {
-        if self.is_empty() {
-            fallback
-        } else {
-            self
-        }
+
+pub fn initialize(targets: &TargetRepository, id: &str) -> AppResult<ConnectedTarget> {
+    let mut target = targets
+        .get(id)
+        .map_err(storage_error)?
+        .ok_or_else(|| AppError::new("target_not_found", "Publishing target no longer exists"))?;
+    if target.target.state != TargetState::NeedsInitialization {
+        return Err(AppError::new(
+            "target_not_initializable",
+            "This target does not need initialization",
+        ));
+    }
+    let root = &target.target.workspace_path;
+    let current_branch = Command::new("git")
+        .args(["branch", "--show-current"])
+        .current_dir(root)
+        .output()
+        .map_err(|_| {
+            AppError::new(
+                "git_unavailable",
+                "Git is required to prepare this repository",
+            )
+        })?;
+    if current_branch.status.success()
+        && String::from_utf8_lossy(&current_branch.stdout).trim() != target.target.default_branch
+    {
+        git(root, &["checkout", "-B", &target.target.default_branch])?;
+    }
+    std::fs::create_dir_all(root.join(&target.target.layout.posts_directory)).map_err(|_| {
+        AppError::new(
+            "target_initialization_failed",
+            "Blog structure could not be created",
+        )
+    })?;
+    std::fs::create_dir_all(root.join(&target.target.layout.resources_directory)).map_err(
+        |_| {
+            AppError::new(
+                "target_initialization_failed",
+                "Blog structure could not be created",
+            )
+        },
+    )?;
+    let marker = root
+        .join(&target.target.layout.posts_directory)
+        .join(".gitkeep");
+    if !marker.exists() {
+        std::fs::write(&marker, "").map_err(|_| {
+            AppError::new(
+                "target_initialization_failed",
+                "Blog structure could not be created",
+            )
+        })?;
+    }
+    git(root, &["add", "--", "."])?;
+    git(
+        root,
+        &[
+            "-c",
+            "user.name=easyBlog",
+            "-c",
+            "user.email=easyblog@local",
+            "commit",
+            "-m",
+            "Initialize easyBlog structure",
+        ],
+    )?;
+    git(
+        root,
+        &[
+            "push",
+            "origin",
+            &format!("HEAD:{}", target.target.default_branch),
+        ],
+    )?;
+    target.target.state = TargetState::Ready;
+    targets.update(&target).map_err(storage_error)?;
+    Ok(target)
+}
+
+fn git(root: &Path, arguments: &[&str]) -> AppResult<()> {
+    let output = Command::new("git")
+        .args(arguments)
+        .current_dir(root)
+        .output()
+        .map_err(|_| {
+            AppError::new(
+                "git_unavailable",
+                "Git is required to prepare this repository",
+            )
+        })?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(AppError::new(
+            "target_initialization_failed",
+            "Blog structure could not be initialized and pushed",
+        ))
     }
 }
 
-fn check_error(error: TargetCheckError) -> AppError {
-    match error {
-        TargetCheckError::MissingWorkspace => {
-            AppError::new("target_workspace_missing", "Target folder does not exist")
-        }
-        TargetCheckError::NotDirectory => {
-            AppError::new("target_not_directory", "Target path must be a folder")
-        }
-        TargetCheckError::NotGitRepository => AppError::new(
-            "target_not_git_repository",
-            "Choose the root of a cloned GitHub Pages repository",
-        ),
-        TargetCheckError::MissingPostsDirectory { path } => AppError::new(
-            "target_missing_posts_directory",
-            format!("Target is missing the required {path} directory"),
-        ),
-        TargetCheckError::InvalidLayoutPath { path } => AppError::new(
-            "target_invalid_layout",
-            format!("Target layout path is unsafe: {path}"),
-        ),
+fn fetch_prune(root: &Path) -> AppResult<()> {
+    let output = Command::new("git")
+        .args(["fetch", "--prune", "origin"])
+        .current_dir(root)
+        .output()
+        .map_err(|_| {
+            AppError::new(
+                "git_unavailable",
+                "Git is required to prepare this repository",
+            )
+        })?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(AppError::new(
+            "target_clone_failed",
+            "GitHub repository could not be prepared. Check your access and try again.",
+        ))
     }
+}
+fn validate_repository(repository: &str) -> AppResult<()> {
+    let valid = repository.split('/').count() == 2
+        && repository.split('/').all(|part| {
+            !part.is_empty()
+                && part.chars().all(|character| {
+                    character.is_ascii_alphanumeric() || matches!(character, '-' | '_' | '.')
+                })
+        });
+    if valid {
+        Ok(())
+    } else {
+        Err(AppError::new(
+            "invalid_repository",
+            "Choose a GitHub repository from the list",
+        ))
+    }
+}
+fn remove_new_workspace(root: &Path, path: &Path) -> std::io::Result<()> {
+    let root = std::fs::canonicalize(root)?;
+    if path
+        .parent()
+        .and_then(|parent| std::fs::canonicalize(parent).ok())
+        .as_deref()
+        == Some(root.as_path())
+    {
+        std::fs::remove_dir_all(path)?;
+    }
+    Ok(())
+}
+fn storage_error(_: rusqlite::Error) -> AppError {
+    AppError::new("storage_error", "Publishing target could not be loaded")
 }
