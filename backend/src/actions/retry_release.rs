@@ -42,8 +42,8 @@ pub fn execute(
         crate::actions::preview_release::select_pending_changes(&pending, &record.change_ids)?;
     // Validate before pushing. A later scan may replace change IDs, in which case
     // pushing this historical commit could no longer be finalized locally.
-    let checkout = Checkout::acquire(target)
-        .map_err(|_| AppError::new("target_unavailable", "The publishing target is not ready"))?;
+    let checkout =
+        Checkout::acquire(target).map_err(crate::actions::preview_release::checkout_error)?;
     crate::releases::push::execute(checkout.root())?;
     let mut baseline = changes
         .list_snapshots(&record.scope_id)
