@@ -24,11 +24,17 @@ impl Frontmatter {
         }
 
         let after_opening_delimiter = &input[4..];
-        let Some(end) = after_opening_delimiter.find("\n---\n") else {
-            return Err(FrontmatterError::Unterminated);
+        let (metadata, body) = if let Some(body) = after_opening_delimiter.strip_prefix("---\n") {
+            ("", body.to_owned())
+        } else {
+            let Some(end) = after_opening_delimiter.find("\n---\n") else {
+                return Err(FrontmatterError::Unterminated);
+            };
+            (
+                &after_opening_delimiter[..end],
+                after_opening_delimiter[end + 5..].to_owned(),
+            )
         };
-        let metadata = &after_opening_delimiter[..end];
-        let body = after_opening_delimiter[end + 5..].to_owned();
         let mut fields = BTreeMap::new();
         for (index, line) in metadata.lines().enumerate() {
             if line.trim().is_empty() || line.trim_start().starts_with('#') {
@@ -75,5 +81,12 @@ mod tests {
                 key: "title".into()
             })
         );
+    }
+
+    #[test]
+    fn accepts_empty_frontmatter_with_a_markdown_body() {
+        let parsed = Frontmatter::parse("---\n---\n# Heading\n").unwrap();
+        assert!(parsed.fields.is_empty());
+        assert_eq!(parsed.body, "# Heading\n");
     }
 }

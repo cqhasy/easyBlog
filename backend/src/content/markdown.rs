@@ -1,5 +1,5 @@
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Markdown(pub String);
+pub struct Markdown(String);
 
 impl Markdown {
     pub fn normalize(input: &str) -> Self {
@@ -21,7 +21,7 @@ mod tests {
     fn normalizes_bom_line_endings_and_terminal_newline() {
         assert_eq!(
             Markdown::normalize("\u{feff}# title\r\ntext\r\n\r\n"),
-            Markdown("# title\ntext\n".into())
+            Markdown::normalize("# title\ntext\n")
         );
     }
 }

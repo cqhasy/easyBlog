@@ -39,7 +39,7 @@ pub fn normalize_local_markdown(
         source_identity,
         title,
         metadata: frontmatter.fields,
-        markdown: Markdown(frontmatter.body),
+        markdown: Markdown::normalize(&frontmatter.body),
         resources,
         warnings: Vec::new(),
     })
@@ -47,8 +47,17 @@ pub fn normalize_local_markdown(
 
 fn first_heading(markdown: &str) -> Option<String> {
     markdown.lines().find_map(|line| {
-        let title = line.strip_prefix('#')?.trim_start_matches('#').trim();
-        (!title.is_empty()).then(|| title.to_owned())
+        let heading_level = line.bytes().take_while(|byte| *byte == b'#').count();
+        if !(1..=6).contains(&heading_level) {
+            return None;
+        }
+        let title = &line[heading_level..];
+        title
+            .chars()
+            .next()
+            .filter(|character| character.is_whitespace())
+            .map(|_| title.trim().to_owned())
+            .filter(|title| !title.is_empty())
     })
 }
 
@@ -81,6 +90,16 @@ mod tests {
     fn derives_display_title_from_first_atx_heading() {
         let article = normalize_local_markdown("post.md", "intro\n## A heading\n").unwrap();
         assert_eq!(article.title.as_deref(), Some("A heading"));
+    }
+
+    #[test]
+    fn ignores_invalid_hash_prefixed_lines_when_deriving_title() {
+        let article = normalize_local_markdown(
+            "post.md",
+            "#draft\n####### also invalid\n### Valid heading\n",
+        )
+        .unwrap();
+        assert_eq!(article.title.as_deref(), Some("Valid heading"));
     }
 
     #[test]

@@ -3,6 +3,7 @@
 ## 2026-09-02
 
 - Completed M1.2 Markdown normalization: source-independent articles now normalize BOM and line endings, parse deterministic flat front matter, derive display titles, record local image/download references, and reject ambiguous front matter.
+- Addressed Markdown normalization review findings: empty front matter is accepted, normalized Markdown cannot be constructed with invalid formatting, title extraction follows ATX heading syntax, and resource discovery tracks matching code-fence markers.
 - Kept final Front Matter, slug, article paths, and resource paths out of the content layer; the GitHub Pages template adapter remains responsible for those target-specific fields in M2.
 - Added focused content tests and verified with `cargo fmt --manifest-path backend/Cargo.toml --all -- --check`, `cargo test --manifest-path backend/Cargo.toml`, `npm test`, `npm run build`, and `git diff --check`.
 - Recorded the Scope configuration review fixes on `feat/scope-add`: normalized include/exclude validation, recursive scope-overlap detection, optimistic revision checks for updates, accurate blocked-state labels, and guarded lifecycle actions.
