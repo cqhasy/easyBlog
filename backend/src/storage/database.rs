@@ -31,6 +31,29 @@ pub fn initialize(connection: &Connection) -> Result<()> {
            recursive INTEGER NOT NULL,
            display_name TEXT NOT NULL,
            PRIMARY KEY (scope_id, node_kind, node_value)
-         );",
+         );
+         CREATE TABLE IF NOT EXISTS snapshots (
+           scope_id TEXT NOT NULL REFERENCES scopes(id) ON DELETE CASCADE,
+           source_identity TEXT NOT NULL,
+           source_path TEXT NOT NULL,
+           title TEXT,
+           fingerprint TEXT NOT NULL,
+           observed_at TEXT NOT NULL,
+           PRIMARY KEY (scope_id, source_identity)
+         );
+         CREATE TABLE IF NOT EXISTS changes (
+           id TEXT PRIMARY KEY NOT NULL,
+           scope_id TEXT NOT NULL REFERENCES scopes(id) ON DELETE CASCADE,
+           change_kind TEXT NOT NULL,
+           source_identity TEXT NOT NULL,
+           source_path TEXT NOT NULL,
+           previous_path TEXT,
+           title TEXT,
+           selected INTEGER NOT NULL,
+           blocked_reason TEXT,
+           fingerprint TEXT,
+           scanned_at TEXT NOT NULL
+         );
+         CREATE INDEX IF NOT EXISTS changes_by_scope ON changes(scope_id, scanned_at, source_path);",
     )
 }

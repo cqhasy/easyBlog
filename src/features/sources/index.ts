@@ -48,6 +48,10 @@ export async function addSourceAndReload(
   return loadSources(api);
 }
 
+export function notifyScopesChanged(onScopesChanged: () => void): void {
+  onScopesChanged();
+}
+
 export function createSourcesRefreshController(
   api: SourcesApi,
   apply: (state: SourcesState) => void,
@@ -141,7 +145,11 @@ function renderEditor(editor?: EditorState): string {
   return `<aside class="scope-editor" aria-label="同步范围编辑器"><header><div><p class="eyebrow">SYNC SCOPE</p><h2>${scope ? "编辑同步范围" : "新建同步范围"}</h2><p>${escapeHtml(editor.source.name)}</p></div><button class="icon-button close-button" type="button" data-action="close-editor" aria-label="关闭编辑器" title="关闭">x</button></header><form id="scope-form"><section class="editor-section scope-name-section"><label>范围名称<input name="scope-name" required value="${escapeHtml(scope?.name ?? `${editor.source.name} 同步范围`)}" /></label></section><section class="editor-section selection-section"><div class="section-heading"><div><h3>同步内容</h3><p>选择目录或单篇 Markdown 文件。</p></div></div><div class="scope-root"><label><input type="checkbox" data-action="toggle-root" ${editor.selections.some((selection) => selection.node.value === ".") ? "checked" : ""} /><span><strong>整个来源</strong><small>包含来源中的所有 Markdown 文件</small></span></label></div><div class="source-tree">${renderTree(editor)}</div></section><section class="editor-section rules-section"><div><h3>包含规则</h3><p>只同步符合这些路径规则的内容。</p></div>${renderRuleRows("include", editor.includePatterns)}</section><section class="editor-section rules-section"><div><h3>排除规则</h3><p>排除规则优先于包含规则。</p></div>${renderRuleRows("exclude", editor.excludePatterns)}</section>${editor.error ? `<p class="editor-error" role="alert">${escapeHtml(editor.error)}</p>` : ""}<footer><p class="scope-note">发布目标将在后续配置。</p><div class="editor-actions"><button type="submit">保存范围</button>${scope ? `<button class="secondary-button" type="button" data-action="toggle-lifecycle" ${lifecycleDisabled}>${lifecycleLabel}</button><button class="danger-button" type="button" data-action="delete-scope" ${lifecycleDisabled}>删除</button>` : ""}</div></footer></form></aside>`;
 }
 
-export function mountSources(root: HTMLElement, api: SourcesApi = { listSources, addSource, listScopes, saveScope, setScopeLifecycle, getSourceChildren }): void {
+export function mountSources(
+  root: HTMLElement,
+  api: SourcesApi = { listSources, addSource, listScopes, saveScope, setScopeLifecycle, getSourceChildren },
+  onScopesChanged: () => void = () => undefined,
+): void {
   let state: SourcesState = { status: "loading" };
   let scopes: ScopeSummary[] = [];
   let editor: EditorState | undefined;
@@ -165,6 +173,7 @@ export function mountSources(root: HTMLElement, api: SourcesApi = { listSources,
       try {
         const saved = await api.saveScope({ id: editor.scope?.id, source_id: editor.source.id, target_id: null, name, lifecycle: editor.scope?.lifecycle ?? "active", selections: editor.selections, include_patterns: editor.includePatterns, exclude_patterns: editor.excludePatterns }, editor.scope?.revision);
         editor = editorFor(editor.source, saved.scope);
+        notifyScopesChanged(onScopesChanged);
         scopes = await (api.listScopes?.() ?? Promise.resolve([]));
       } catch (error) { editor.error = errorMessage(error, "Scope could not be saved"); }
       render(); return;
@@ -177,15 +186,16 @@ export function mountSources(root: HTMLElement, api: SourcesApi = { listSources,
     try {
       state = { status: "loading" };
       render();
-      const nextState = await addSourceAndReload(api as Required<SourcesApi>, {
+      const addedSource = await api.addSource({
         path: String(data.get("path") ?? ""),
         name: String(data.get("name") ?? "") || undefined,
       });
+      notifyScopesChanged(onScopesChanged);
+      const nextState = await loadSources(api);
       if (refreshController.isCurrent(requestGeneration)) {
         state = nextState;
         scopes = await (api.listScopes?.() ?? Promise.resolve([]));
-        const addedSource = state.status === "ready" ? state.sources.find((item) => item.id === (nextState.status === "ready" ? nextState.sources.at(-1)?.id : undefined)) : undefined;
-        if (addedSource) editor = editorFor(addedSource);
+        if (state.status === "ready" && state.sources.some((item) => item.id === addedSource.id)) editor = editorFor(addedSource);
         render();
       }
     } catch (error) {
@@ -217,6 +227,7 @@ export function mountSources(root: HTMLElement, api: SourcesApi = { listSources,
       render();
       const lifecycle = action === "delete-scope" ? "deleted" : activeScope.lifecycle === "paused" ? "active" : "paused";
       void api.setScopeLifecycle(activeScope.id, lifecycle, activeScope.revision).then(async () => {
+        notifyScopesChanged(onScopesChanged);
         scopes = await (api.listScopes?.() ?? Promise.resolve([]));
         if (editor !== activeEditor) return;
         editor = lifecycle === "deleted" ? undefined : editorFor(activeEditor.source, scopes.find((item) => item.scope.id === activeScope.id)?.scope);
