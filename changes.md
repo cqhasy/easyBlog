@@ -2,6 +2,7 @@
 
 ## 2026-09-02
 
+- Corrected Git target validation after review: target roots are now verified by `git rev-parse` rather than `.git` path inspection, so fake metadata directories are blocked and valid linked worktrees are accepted.
 - Completed M2.1 target validation and the GitHub Pages template adapter. Target checks now require a local Git workspace with the supported `_posts` layout, report whether first-publish configuration is needed, and reject unsafe layout paths without writing to the repository.
 - Added deterministic target rendering for article front matter, Unicode-safe slugs, per-article resource paths, and the system-maintained non-sensitive `.github/easyblog.yml` content. Focused target and template tests cover layout mismatch, generated paths, configuration detection, and stable output.
 - Added the M1.4 review-workspace slice: the default workbench now loads active scope changes, groups blocked, added, updated, moved, and deleted items, supports manual selection, and keeps a fixed selected-count / release-preview bar in view.
