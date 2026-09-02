@@ -1,4 +1,9 @@
-use crate::{actions, app::state::AppState, shared::errors::AppResult, targets::Target};
+use crate::{
+    actions,
+    app::state::AppState,
+    shared::errors::{AppError, AppResult},
+    targets::Target,
+};
 use serde::Deserialize;
 use tauri::State;
 
@@ -10,18 +15,30 @@ pub struct PreviewReleaseCommandInput {
 }
 
 #[tauri::command]
-pub fn preview_release(
+pub async fn preview_release(
     state: State<'_, AppState>,
     input: PreviewReleaseCommandInput,
 ) -> AppResult<crate::releases::ReleasePlan> {
-    actions::preview_release::execute(
-        &state.sources,
-        &state.scopes,
-        &state.changes,
-        actions::preview_release::PreviewReleaseInput {
-            scope_id: input.scope_id,
-            target: input.target,
-            change_ids: input.change_ids,
-        },
-    )
+    let sources = state.sources.clone();
+    let scopes = state.scopes.clone();
+    let changes = state.changes.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        actions::preview_release::execute(
+            &sources,
+            &scopes,
+            &changes,
+            actions::preview_release::PreviewReleaseInput {
+                scope_id: input.scope_id,
+                target: input.target,
+                change_ids: input.change_ids,
+            },
+        )
+    })
+    .await
+    .map_err(|_| {
+        AppError::new(
+            "preview_task_failed",
+            "Release preview could not be completed",
+        )
+    })?
 }

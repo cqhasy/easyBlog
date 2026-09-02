@@ -36,13 +36,7 @@ pub fn execute(
             "The selected target does not match this scope",
         ));
     }
-    let requested = BTreeSet::<_>::from_iter(input.change_ids.iter().cloned());
-    if requested.is_empty() || requested.len() != input.change_ids.len() {
-        return Err(AppError::new(
-            "empty_release_batch",
-            "Choose each change at most once before previewing",
-        ));
-    }
+    let requested = requested_changes(&input.change_ids)?;
     let available = changes
         .list(&scope.id)
         .map_err(|_| AppError::new("storage_error", "Changes could not be loaded"))?;
@@ -71,13 +65,30 @@ pub fn execute(
         target_id: input.target.id.clone(),
         change_ids: input.change_ids,
     };
-    Ok(ReleasePlan::new(
+    ReleasePlan::new(
         batch.id.clone(),
         batch,
         needs_configuration,
         &files,
         checkout.root(),
-    ))
+    )
+}
+
+fn requested_changes(change_ids: &[String]) -> AppResult<BTreeSet<String>> {
+    if change_ids.is_empty() {
+        return Err(AppError::new(
+            "empty_release_batch",
+            "Choose at least one change before previewing",
+        ));
+    }
+    let requested = BTreeSet::from_iter(change_ids.iter().cloned());
+    if requested.len() != change_ids.len() {
+        return Err(AppError::new(
+            "duplicate_change_selection",
+            "Choose each change at most once before previewing",
+        ));
+    }
+    Ok(requested)
 }
 
 fn select_changes(available: &[Change], requested: &BTreeSet<String>) -> AppResult<Vec<Change>> {
@@ -347,5 +358,22 @@ mod tests {
         drop(scopes);
         drop(sources);
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn distinguishes_empty_and_duplicate_change_selections() {
+        let empty = requested_changes(&[]).unwrap_err();
+        assert_eq!(empty.code, "empty_release_batch");
+        assert_eq!(
+            empty.message,
+            "Choose at least one change before previewing"
+        );
+
+        let duplicate = requested_changes(&["change".into(), "change".into()]).unwrap_err();
+        assert_eq!(duplicate.code, "duplicate_change_selection");
+        assert_eq!(
+            duplicate.message,
+            "Choose each change at most once before previewing"
+        );
     }
 }
