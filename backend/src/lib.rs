@@ -37,6 +37,8 @@ pub fn run() {
             health,
             commands::sources::add_source,
             commands::sources::list_sources,
+            commands::targets::connect_target,
+            commands::targets::list_targets,
             commands::scopes::save_scope,
             commands::scopes::list_scopes,
             commands::scopes::set_scope_lifecycle,
@@ -44,7 +46,10 @@ pub fn run() {
             commands::changes::scan_scope,
             commands::changes::list_changes,
             commands::releases::preview_release,
-            commands::releases::publish_release
+            commands::releases::publish_release,
+            commands::history::list_publications,
+            commands::history::retry_release,
+            commands::history::rollback_publication
         ])
         .run(tauri::generate_context!())
         .expect("error while running easyBlog");

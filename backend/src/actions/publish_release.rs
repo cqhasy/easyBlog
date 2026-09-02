@@ -5,7 +5,12 @@ use crate::{
     changes::change::ChangeKind,
     releases::{commit, push, stage},
     shared::errors::{AppError, AppResult},
-    storage::{changes::ChangeRepository, scopes::ScopeRepository, sources::SourceRepository},
+    storage::{
+        changes::ChangeRepository,
+        publications::{PublicationRecord, PublicationRepository, PublicationState},
+        scopes::ScopeRepository,
+        sources::SourceRepository,
+    },
     targets::Target,
     workspace::Checkout,
 };
@@ -27,6 +32,7 @@ pub fn execute(
     sources: &SourceRepository,
     scopes: &ScopeRepository,
     changes: &ChangeRepository,
+    publications: &PublicationRepository,
     input: PublishReleaseInput,
 ) -> AppResult<Publication> {
     let scope = scopes
@@ -48,6 +54,20 @@ pub fn execute(
     let files = preview_release::build_file_set(&source.path, &input.target, &selected)?;
     stage::apply(checkout.root(), &files)?;
     let commit_sha = commit::create(checkout.root(), "Publish easyBlog release")?;
+    let batch_id = uuid::Uuid::new_v4().to_string();
+    publications
+        .insert_pending(&PublicationRecord {
+            batch_id: batch_id.clone(),
+            scope_id: scope.id.clone(),
+            target_id: input.target.id.clone(),
+            commit_sha: commit_sha.clone(),
+            change_ids: input.change_ids.clone(),
+            state: PublicationState::PendingPush,
+            published_at: None,
+            rollback_commit_sha: None,
+            rolled_back_at: None,
+        })
+        .map_err(|_| AppError::new("storage_error", "Release history could not be saved"))?;
     push::execute(checkout.root())?;
     let mut baseline = changes
         .list_snapshots(&scope.id)
@@ -65,10 +85,14 @@ pub fn execute(
     changes
         .apply_publication(&scope.id, &baseline, &input.change_ids)
         .map_err(|_| AppError::new("storage_error", "Published state could not be saved"))?;
+    let published_at = Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true);
+    publications
+        .mark_published(&batch_id, &published_at)
+        .map_err(|_| AppError::new("storage_error", "Release history could not be updated"))?;
     Ok(Publication {
-        batch_id: uuid::Uuid::new_v4().to_string(),
+        batch_id,
         commit_sha,
-        published_at: Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true),
+        published_at,
     })
 }
 
@@ -188,10 +212,13 @@ mod tests {
             )
             .unwrap();
 
+        let publications =
+            crate::storage::publications::PublicationRepository::open(&database).unwrap();
         let publication = execute(
             &sources,
             &scopes,
             &changes,
+            &publications,
             PublishReleaseInput {
                 scope_id: "scope".into(),
                 target: Target::new("target", &target_root),
@@ -207,6 +234,13 @@ mod tests {
         );
         assert!(changes.list("scope").unwrap().is_empty());
         assert_eq!(changes.list_snapshots("scope").unwrap().len(), 1);
+        assert!(matches!(
+            publications.get(&publication.batch_id).unwrap(),
+            Some(crate::storage::publications::PublicationRecord {
+                state: crate::storage::publications::PublicationState::Published,
+                ..
+            })
+        ));
         let remote_post = Command::new("git")
             .args([
                 "--git-dir",
@@ -220,6 +254,7 @@ mod tests {
         assert!(String::from_utf8_lossy(&remote_post.stdout).contains("title: \"Hello\""));
 
         drop(changes);
+        drop(publications);
         drop(scopes);
         drop(sources);
         fs::remove_dir_all(root).unwrap();
@@ -234,6 +269,8 @@ mod tests {
         let sources = SourceRepository::open(&database).unwrap();
         let scopes = ScopeRepository::open(&database).unwrap();
         let changes = ChangeRepository::open(&database).unwrap();
+        let publications =
+            crate::storage::publications::PublicationRepository::open(&database).unwrap();
         sources
             .insert(&Source {
                 id: "source".into(),
@@ -266,6 +303,7 @@ mod tests {
             &sources,
             &scopes,
             &changes,
+            &publications,
             PublishReleaseInput {
                 scope_id: "scope".into(),
                 target: Target::new("other-target", root.join("other-target")),
@@ -275,6 +313,7 @@ mod tests {
         .unwrap_err();
 
         assert_eq!(error.code, "target_mismatch");
+        drop(publications);
         drop(changes);
         drop(scopes);
         drop(sources);

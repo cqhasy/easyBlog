@@ -5,3 +5,4 @@ pub mod releases;
 pub mod scopes;
 pub mod snapshots;
 pub mod sources;
+pub mod targets;

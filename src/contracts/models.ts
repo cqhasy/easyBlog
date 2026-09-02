@@ -9,6 +9,10 @@ export interface Target {
   workspace_path: string;
   layout?: { posts_directory: string; resources_directory: string };
 }
+export interface ConnectedTarget extends Target {
+  name: string;
+  created_at: string;
+}
 export interface ReleaseBatch {
   id: ReleaseBatchId;
   scope_id: ScopeId;
@@ -28,6 +32,18 @@ export interface Publication {
   batch_id: ReleaseBatchId;
   commit_sha: string;
   published_at: string;
+}
+export type PublicationState = "pending_push" | "published" | "rolled_back";
+export interface PublicationRecord {
+  batch_id: ReleaseBatchId;
+  commit_sha: string;
+  scope_id: ScopeId;
+  target_id: TargetId;
+  change_ids: ChangeId[];
+  state: PublicationState;
+  published_at: string | null;
+  rollback_commit_sha: string | null;
+  rolled_back_at: string | null;
 }
 
 export interface Source {

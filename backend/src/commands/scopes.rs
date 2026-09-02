@@ -12,7 +12,13 @@ pub fn save_scope(
     input: SaveScopeInput,
     expected_revision: Option<i64>,
 ) -> AppResult<ScopeSummary> {
-    configure_scope::save(&state.sources, &state.scopes, input, expected_revision)
+    configure_scope::save(
+        &state.sources,
+        &state.scopes,
+        &state.targets,
+        input,
+        expected_revision,
+    )
 }
 
 #[tauri::command]
