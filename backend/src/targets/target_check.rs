@@ -5,6 +5,7 @@ use super::{layout::PagesLayout, target::Target};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TargetCheck {
     Ready { needs_configuration: bool },
+    NeedsInitialization,
     Unsupported { reason: TargetCheckError },
 }
 
@@ -35,6 +36,9 @@ pub fn check(target: &Target) -> TargetCheck {
         };
     }
     if let Err(error) = validate_layout(root, &target.layout) {
+        if matches!(error, TargetCheckError::MissingPostsDirectory { .. }) {
+            return TargetCheck::NeedsInitialization;
+        }
         return TargetCheck::Unsupported { reason: error };
     }
     TargetCheck::Ready {

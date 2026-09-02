@@ -32,6 +32,11 @@ button:disabled { cursor: wait; opacity: .58; transform: none; }
 .app-brand { color: #fff; font-family: Georgia, serif; font-size: 22px; font-weight: 700; padding: 0 12px 35px; }
 .app-brand span { color: #77c8af; }
 .app-nav nav { display: grid; gap: 4px; }
+.github-authorization { border-top: 1px solid #386054; display: grid; gap: 5px; margin: auto 5px 0; padding: 18px 7px 1px; }
+.github-authorization strong { color: #eef8f3; font-size: 11px; font-weight: 700; }
+.github-authorization span { color: #aec8bc; font-size: 11px; overflow-wrap: anywhere; }
+.github-authorization button, .github-authorization a { align-items: center; background: transparent; border: 1px solid #669c8a; border-radius: 4px; color: #d6eee4; display: inline-flex; font-size: 11px; font-weight: 650; justify-content: center; min-height: 30px; padding: 0 8px; text-decoration: none; width: fit-content; }
+.github-authorization button:hover, .github-authorization a:hover { background: #245247; border-color: #83baaa; color: #fff; }
 .app-nav nav button { background: transparent; border-color: transparent; color: #b8cfc5; min-height: 37px; padding: 0 12px; text-align: left; }
 .app-nav nav button:hover { background: #245247; border-color: #245247; color: #fff; }
 .app-nav nav button.is-active { background: #286a59; border-color: #286a59; color: #fff; }
@@ -58,7 +63,11 @@ time { color: #91a19b; font-size: 12px; white-space: nowrap; }
 .compact-source-form button { min-height: 36px; white-space: nowrap; }
 .target-connect { align-items: center; border-bottom: 1px solid #dbe6e0; display: flex; gap: 18px; justify-content: space-between; padding: 16px 0; }
 .target-connect > div { display: grid; gap: 3px; }.target-connect strong { color: #315147; font-size: 13px; }.target-connect span { color: #82938b; font-size: 11px; }
-.target-connect form { display: grid; gap: 8px; grid-template-columns: minmax(230px, 1fr) 140px auto; }.target-connect input { min-height: 36px; }
+.target-connect form { display: grid; gap: 8px; grid-template-columns: minmax(230px, 1fr) auto auto; }.target-connect input, .target-connect select { background: #fff; border: 1px solid #d6e1dc; border-radius: 5px; color: #1d2a27; min-height: 36px; padding: 0 9px; }
+.target-message { color: #4a685d; font-size: 12px; margin: 11px 0 0; }
+.target-list { display: grid; gap: 0; list-style: none; margin: 13px 0 0; padding: 0; }
+.target-list li { align-items: center; border-top: 1px solid #e1e9e4; display: flex; gap: 12px; justify-content: space-between; padding: 10px 0; }
+.target-list span { display: grid; gap: 3px; min-width: 0; }.target-list strong { color: #355249; font-size: 12px; overflow-wrap: anywhere; }.target-list small { color: #81928b; font-size: 11px; }.target-list .secondary-button { min-height: 31px; white-space: nowrap; }
 .target-section { align-items: center; display: flex; gap: 24px; justify-content: space-between; }.target-section > div { max-width: 230px; }.target-section p { color: #81928b; font-size: 11px; line-height: 1.45; margin: 5px 0 0; }.target-section select { background: #fff; border: 1px solid #d6e1dc; border-radius: 5px; color: #1d2a27; min-height: 38px; padding: 0 8px; width: min(340px, 100%); }
 .visually-hidden { clip-path: inset(50%); height: 1px; margin: -1px; overflow: hidden; position: absolute; width: 1px; }
 .scope-workspace { background: #fff; border: 1px solid #dbe6e0; border-radius: 7px; display: grid; grid-template-columns: minmax(310px, .72fr) minmax(560px, 1.28fr); margin-top: 24px; min-height: 650px; overflow: hidden; }

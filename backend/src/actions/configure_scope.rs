@@ -148,14 +148,16 @@ fn validate_input(
         return Err(AppError::new("source_not_found", "Source no longer exists"));
     }
     if let Some(target_id) = &input.target_id {
-        if targets
+        let target = targets
             .get(target_id)
             .map_err(|_| AppError::new("storage_error", "Publishing target could not be loaded"))?
-            .is_none()
-        {
+            .ok_or_else(|| {
+                AppError::new("target_not_found", "Publishing target no longer exists")
+            })?;
+        if target.target.state != crate::targets::TargetState::Ready {
             return Err(AppError::new(
-                "target_not_found",
-                "Publishing target no longer exists",
+                "target_not_ready",
+                "Prepare this GitHub repository before binding it to a scope",
             ));
         }
     }

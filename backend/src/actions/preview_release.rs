@@ -240,6 +240,10 @@ fn checkout_error(error: crate::workspace::CheckoutError) -> AppError {
             "workspace_busy",
             "Another target operation is already running",
         ),
+        crate::workspace::CheckoutError::Synchronization => AppError::new(
+            "workspace_needs_recovery",
+            "The GitHub repository changed in a way easyBlog cannot update safely",
+        ),
         _ => AppError::new("target_unavailable", "The publishing target is not ready"),
     }
 }

@@ -29,6 +29,7 @@ pub async fn retry_release(
     let publications = state.publications.clone();
     let targets = state.targets.clone();
     tauri::async_runtime::spawn_blocking(move || {
+        actions::github_auth::require_ready()?;
         let target = target_for_publication(&publications, &targets, &input.batch_id)?;
         actions::retry_release::execute(&changes, &publications, &input.batch_id, &target)
     })
@@ -44,6 +45,7 @@ pub async fn rollback_publication(
     let publications = state.publications.clone();
     let targets = state.targets.clone();
     tauri::async_runtime::spawn_blocking(move || {
+        actions::github_auth::require_ready()?;
         let target = target_for_publication(&publications, &targets, &input.batch_id)?;
         actions::rollback_publication::execute(&publications, &input.batch_id, &target)
     })
