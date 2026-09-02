@@ -1,11 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
-import type { Source } from "../../contracts";
+import type { ScopeSummary, Source } from "../../contracts";
 import {
   addSourceAndReload,
   createSourcesRefreshController,
   formatSourcePath,
   loadSources,
   renderSources,
+  scopeLabel,
 } from "./index";
 
 const source: Source = {
@@ -52,6 +53,28 @@ describe("sources feature", () => {
   it("removes the Windows extended path prefix for display", () => {
     expect(formatSourcePath("\\\\?\\D:\\markdown")).toBe("D:\\markdown");
     expect(formatSourcePath("\\\\?\\UNC\\server\\share")).toBe("\\\\server\\share");
+  });
+
+  it("labels blocked scopes as blocked", () => {
+    const summary: ScopeSummary = {
+      scope: {
+        id: "scope-1",
+        source_id: source.id,
+        target_id: "target-1",
+        name: "Posts",
+        lifecycle: "active",
+        revision: 1,
+        selections: [],
+        include_patterns: [],
+        exclude_patterns: [],
+        created_at: source.created_at,
+        updated_at: source.created_at,
+      },
+      health: "blocked",
+      diagnostics: [],
+    };
+
+    expect(scopeLabel(summary)).toBe("已阻塞");
   });
 
   it("reloads the persisted list after adding a source", async () => {
