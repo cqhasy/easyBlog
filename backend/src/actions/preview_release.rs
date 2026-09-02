@@ -5,7 +5,9 @@ use crate::{
     content::normalize_local_markdown,
     providers::local::reader::LocalReader,
     releases::{FileSet, PlannedFile, PlannedFileContents, ReleaseBatch, ReleasePlan},
+    scopes::scope::Scope,
     shared::errors::{AppError, AppResult},
+    sources::source::Source,
     storage::{changes::ChangeRepository, scopes::ScopeRepository, sources::SourceRepository},
     targets::{Target, Template},
     workspace::Checkout,
@@ -27,30 +29,16 @@ pub fn execute(
         .get(&input.scope_id)
         .map_err(|_| AppError::new("storage_error", "Scope could not be loaded"))?
         .ok_or_else(|| AppError::new("scope_not_found", "Scope no longer exists"))?;
-    let target_id = scope.target_id.as_deref().ok_or_else(|| {
-        AppError::new("scope_needs_target", "This scope needs a publishing target")
-    })?;
-    if target_id != input.target.id {
-        return Err(AppError::new(
-            "target_mismatch",
-            "The selected target does not match this scope",
-        ));
-    }
-    let requested = requested_changes(&input.change_ids)?;
+    validate_scope_target(&scope, &input.target)?;
     let available = changes
         .list(&scope.id)
         .map_err(|_| AppError::new("storage_error", "Changes could not be loaded"))?;
-    let selected = select_changes(&available, &requested)?;
+    let selected = select_pending_changes(&available, &input.change_ids)?;
     let source = sources
         .get(&scope.source_id)
         .map_err(|_| AppError::new("storage_error", "Source could not be loaded"))?
         .ok_or_else(|| AppError::new("source_not_found", "Source no longer exists"))?;
-    if source.r#type != "local_directory" {
-        return Err(AppError::new(
-            "unsupported_source",
-            "This source type cannot be published yet",
-        ));
-    }
+    validate_publishable_source(&source)?;
     let checkout = Checkout::acquire(&input.target).map_err(checkout_error)?;
     let files = build_file_set(&source.path, &input.target, &selected)?;
     let needs_configuration = matches!(
@@ -74,6 +62,30 @@ pub fn execute(
     )
 }
 
+pub(crate) fn validate_scope_target(scope: &Scope, target: &Target) -> AppResult<()> {
+    let target_id = scope.target_id.as_deref().ok_or_else(|| {
+        AppError::new("scope_needs_target", "This scope needs a publishing target")
+    })?;
+    if target_id != target.id {
+        return Err(AppError::new(
+            "target_mismatch",
+            "The selected target does not match this scope",
+        ));
+    }
+    Ok(())
+}
+
+pub(crate) fn validate_publishable_source(source: &Source) -> AppResult<()> {
+    if source.r#type == "local_directory" {
+        Ok(())
+    } else {
+        Err(AppError::new(
+            "unsupported_source",
+            "This source type cannot be published yet",
+        ))
+    }
+}
+
 fn requested_changes(change_ids: &[String]) -> AppResult<BTreeSet<String>> {
     if change_ids.is_empty() {
         return Err(AppError::new(
@@ -91,7 +103,11 @@ fn requested_changes(change_ids: &[String]) -> AppResult<BTreeSet<String>> {
     Ok(requested)
 }
 
-fn select_changes(available: &[Change], requested: &BTreeSet<String>) -> AppResult<Vec<Change>> {
+pub(crate) fn select_pending_changes(
+    available: &[Change],
+    change_ids: &[String],
+) -> AppResult<Vec<Change>> {
+    let requested = requested_changes(change_ids)?;
     let selected = available
         .iter()
         .filter(|change| requested.contains(&change.id))

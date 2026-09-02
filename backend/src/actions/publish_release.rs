@@ -5,10 +5,7 @@ use crate::{
     changes::change::ChangeKind,
     releases::{commit, push, stage},
     shared::errors::{AppError, AppResult},
-    storage::{
-        changes::ChangeRepository, scopes::ScopeRepository, snapshots::SnapshotRepository,
-        sources::SourceRepository,
-    },
+    storage::{changes::ChangeRepository, scopes::ScopeRepository, sources::SourceRepository},
     targets::Target,
     workspace::Checkout,
 };
@@ -19,7 +16,7 @@ pub struct PublishReleaseInput {
     pub change_ids: Vec<String>,
 }
 
-#[derive(serde::Serialize)]
+#[derive(Debug, serde::Serialize)]
 pub struct Publication {
     pub batch_id: String,
     pub commit_sha: String,
@@ -29,7 +26,6 @@ pub struct Publication {
 pub fn execute(
     sources: &SourceRepository,
     scopes: &ScopeRepository,
-    snapshots: &SnapshotRepository,
     changes: &ChangeRepository,
     input: PublishReleaseInput,
 ) -> AppResult<Publication> {
@@ -37,6 +33,7 @@ pub fn execute(
         .get(&input.scope_id)
         .map_err(|_| AppError::new("storage_error", "Scope could not be loaded"))?
         .ok_or_else(|| AppError::new("scope_not_found", "Scope no longer exists"))?;
+    preview_release::validate_scope_target(&scope, &input.target)?;
     let source = sources
         .get(&scope.source_id)
         .map_err(|_| AppError::new("storage_error", "Source could not be loaded"))?
@@ -44,36 +41,16 @@ pub fn execute(
     let available = changes
         .list(&scope.id)
         .map_err(|_| AppError::new("storage_error", "Changes could not be loaded"))?;
-    let requested = std::collections::BTreeSet::from_iter(input.change_ids.iter().cloned());
-    if requested.is_empty() || requested.len() != input.change_ids.len() {
-        return Err(AppError::new(
-            "invalid_release_batch",
-            "Choose each pending change exactly once",
-        ));
-    }
-    let selected = available
-        .iter()
-        .filter(|change| requested.contains(&change.id))
-        .cloned()
-        .collect::<Vec<_>>();
-    if selected.len() != requested.len()
-        || selected
-            .iter()
-            .any(|change| matches!(change.kind, ChangeKind::Blocked))
-    {
-        return Err(AppError::new(
-            "invalid_release_batch",
-            "Selected changes are no longer publishable",
-        ));
-    }
+    let selected = preview_release::select_pending_changes(&available, &input.change_ids)?;
+    preview_release::validate_publishable_source(&source)?;
     let checkout = Checkout::acquire(&input.target)
         .map_err(|_| AppError::new("target_unavailable", "The publishing target is not ready"))?;
     let files = preview_release::build_file_set(&source.path, &input.target, &selected)?;
     stage::apply(checkout.root(), &files)?;
     let commit_sha = commit::create(checkout.root(), "Publish easyBlog release")?;
     push::execute(checkout.root())?;
-    let mut baseline = snapshots
-        .list(&scope.id)
+    let mut baseline = changes
+        .list_snapshots(&scope.id)
         .map_err(|_| AppError::new("storage_error", "Snapshots could not be loaded"))?;
     baseline.retain(|snapshot| {
         !selected.iter().any(|change| {
@@ -85,12 +62,9 @@ pub fn execute(
         baseline.retain(|current| current.source_identity != snapshot.source_identity);
         baseline.push(snapshot);
     }
-    snapshots
-        .replace(&scope.id, &baseline)
-        .map_err(|_| AppError::new("storage_error", "Published snapshots could not be saved"))?;
     changes
-        .remove(&scope.id, &input.change_ids)
-        .map_err(|_| AppError::new("storage_error", "Published changes could not be cleared"))?;
+        .apply_publication(&scope.id, &baseline, &input.change_ids)
+        .map_err(|_| AppError::new("storage_error", "Published state could not be saved"))?;
     Ok(Publication {
         batch_id: uuid::Uuid::new_v4().to_string(),
         commit_sha,
@@ -103,13 +77,10 @@ mod tests {
     use std::{fs, path::Path, process::Command};
 
     use crate::{
-        changes::change::Change,
+        changes::change::{Change, ChangeKind},
         scopes::scope::{Scope, ScopeLifecycle},
         sources::source::Source,
-        storage::{
-            changes::ChangeRepository, scopes::ScopeRepository, snapshots::SnapshotRepository,
-            sources::SourceRepository,
-        },
+        storage::{changes::ChangeRepository, scopes::ScopeRepository, sources::SourceRepository},
     };
 
     use super::*;
@@ -163,7 +134,6 @@ mod tests {
         let database = root.join("easyblog.sqlite");
         let sources = SourceRepository::open(&database).unwrap();
         let scopes = ScopeRepository::open(&database).unwrap();
-        let snapshots = SnapshotRepository::open(&database).unwrap();
         let changes = ChangeRepository::open(&database).unwrap();
         sources
             .insert(&Source {
@@ -221,7 +191,6 @@ mod tests {
         let publication = execute(
             &sources,
             &scopes,
-            &snapshots,
             &changes,
             PublishReleaseInput {
                 scope_id: "scope".into(),
@@ -237,7 +206,7 @@ mod tests {
             "---\nslug: \"hello\"\ntitle: \"Hello\"\n---\n# Hello\n"
         );
         assert!(changes.list("scope").unwrap().is_empty());
-        assert_eq!(snapshots.list("scope").unwrap().len(), 1);
+        assert_eq!(changes.list_snapshots("scope").unwrap().len(), 1);
         let remote_post = Command::new("git")
             .args([
                 "--git-dir",
@@ -251,7 +220,62 @@ mod tests {
         assert!(String::from_utf8_lossy(&remote_post.stdout).contains("title: \"Hello\""));
 
         drop(changes);
-        drop(snapshots);
+        drop(scopes);
+        drop(sources);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn rejects_a_target_that_is_not_bound_to_the_scope_before_publishing() {
+        let root =
+            std::env::temp_dir().join(format!("easyblog-publish-target-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        let database = root.join("easyblog.sqlite");
+        let sources = SourceRepository::open(&database).unwrap();
+        let scopes = ScopeRepository::open(&database).unwrap();
+        let changes = ChangeRepository::open(&database).unwrap();
+        sources
+            .insert(&Source {
+                id: "source".into(),
+                path: root.to_string_lossy().into_owned(),
+                name: "Content".into(),
+                r#type: "local_directory".into(),
+                created_at: "now".into(),
+            })
+            .unwrap();
+        scopes
+            .save(
+                &Scope {
+                    id: "scope".into(),
+                    source_id: "source".into(),
+                    target_id: Some("configured-target".into()),
+                    name: "Posts".into(),
+                    lifecycle: ScopeLifecycle::Active,
+                    revision: 1,
+                    selections: vec![],
+                    include_patterns: vec![],
+                    exclude_patterns: vec![],
+                    created_at: "now".into(),
+                    updated_at: "now".into(),
+                },
+                None,
+            )
+            .unwrap();
+
+        let error = execute(
+            &sources,
+            &scopes,
+            &changes,
+            PublishReleaseInput {
+                scope_id: "scope".into(),
+                target: Target::new("other-target", root.join("other-target")),
+                change_ids: vec!["change".into()],
+            },
+        )
+        .unwrap_err();
+
+        assert_eq!(error.code, "target_mismatch");
+        drop(changes);
         drop(scopes);
         drop(sources);
         fs::remove_dir_all(root).unwrap();

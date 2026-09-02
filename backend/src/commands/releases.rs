@@ -57,13 +57,11 @@ pub async fn publish_release(
 ) -> AppResult<actions::publish_release::Publication> {
     let sources = state.sources.clone();
     let scopes = state.scopes.clone();
-    let snapshots = state.snapshots.clone();
     let changes = state.changes.clone();
     tauri::async_runtime::spawn_blocking(move || {
         actions::publish_release::execute(
             &sources,
             &scopes,
-            &snapshots,
             &changes,
             actions::publish_release::PublishReleaseInput {
                 scope_id: input.scope_id,

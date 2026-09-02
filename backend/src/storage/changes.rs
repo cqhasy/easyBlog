@@ -86,6 +86,27 @@ impl ChangeRepository {
         Ok(changes)
     }
 
+    pub fn list_snapshots(&self, scope_id: &str) -> Result<Vec<Snapshot>> {
+        let connection = self
+            .connection
+            .lock()
+            .expect("change repository lock poisoned");
+        let mut statement = connection.prepare("SELECT scope_id, source_identity, source_path, title, fingerprint, observed_at FROM snapshots WHERE scope_id = ?1 ORDER BY source_path")?;
+        let snapshots = statement
+            .query_map([scope_id], |row| {
+                Ok(Snapshot {
+                    scope_id: row.get(0)?,
+                    source_identity: row.get(1)?,
+                    source_path: row.get(2)?,
+                    title: row.get(3)?,
+                    fingerprint: row.get(4)?,
+                    observed_at: row.get(5)?,
+                })
+            })?
+            .collect::<Result<Vec<_>>>()?;
+        Ok(snapshots)
+    }
+
     pub fn remove(&self, scope_id: &str, change_ids: &[String]) -> Result<()> {
         let mut connection = self
             .connection
@@ -97,6 +118,33 @@ impl ChangeRepository {
                 "DELETE FROM changes WHERE scope_id = ?1 AND id = ?2",
                 params![scope_id, id],
             )?;
+        }
+        transaction.commit()
+    }
+
+    pub fn apply_publication(
+        &self,
+        scope_id: &str,
+        snapshots: &[Snapshot],
+        change_ids: &[String],
+    ) -> Result<()> {
+        let mut connection = self
+            .connection
+            .lock()
+            .expect("change repository lock poisoned");
+        let transaction = connection.transaction()?;
+        transaction.execute("DELETE FROM snapshots WHERE scope_id = ?1", [scope_id])?;
+        for snapshot in snapshots {
+            transaction.execute("INSERT INTO snapshots (scope_id, source_identity, source_path, title, fingerprint, observed_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)", params![snapshot.scope_id, snapshot.source_identity, snapshot.source_path, snapshot.title, snapshot.fingerprint, snapshot.observed_at])?;
+        }
+        for id in change_ids {
+            let deleted = transaction.execute(
+                "DELETE FROM changes WHERE scope_id = ?1 AND id = ?2",
+                params![scope_id, id],
+            )?;
+            if deleted != 1 {
+                return Err(rusqlite::Error::QueryReturnedNoRows);
+            }
         }
         transaction.commit()
     }
@@ -249,6 +297,57 @@ mod tests {
             Some("fingerprint")
         );
 
+        drop(repository);
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn rolls_back_snapshot_updates_when_a_pending_change_cannot_be_cleared() {
+        let path = temp_db();
+        create_scope(&path);
+        let repository = ChangeRepository::open(&path).unwrap();
+        let previous = Snapshot {
+            scope_id: "scope".into(),
+            source_identity: "old.md".into(),
+            source_path: "old.md".into(),
+            title: Some("Old".into()),
+            fingerprint: "old".into(),
+            observed_at: "before".into(),
+        };
+        let pending = Change {
+            id: "change".into(),
+            scope_id: "scope".into(),
+            kind: ChangeKind::Added,
+            source_identity: "new.md".into(),
+            source_path: "new.md".into(),
+            previous_path: None,
+            title: Some("New".into()),
+            selected: true,
+            blocked_reason: None,
+            snapshot: Some(previous.clone()),
+        };
+        repository
+            .replace_scan_result("scope", "before", &[previous.clone()], &[pending])
+            .unwrap();
+
+        let replacement = Snapshot {
+            source_identity: "new.md".into(),
+            source_path: "new.md".into(),
+            title: Some("New".into()),
+            fingerprint: "new".into(),
+            observed_at: "after".into(),
+            ..previous.clone()
+        };
+        assert!(repository
+            .apply_publication(
+                "scope",
+                &[replacement],
+                &["change".into(), "missing".into()]
+            )
+            .is_err());
+
+        assert_eq!(repository.list_snapshots("scope").unwrap(), vec![previous]);
+        assert_eq!(repository.list("scope").unwrap().len(), 1);
         drop(repository);
         std::fs::remove_file(path).unwrap();
     }
