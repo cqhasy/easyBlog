@@ -21,11 +21,11 @@ describe("changes workspace", () => {
   });
 
   it("renders blocked context and enables preview for publishable selections", () => {
-    const html = renderChanges({ status: "ready", scope, changes: [change("blocked"), change("added")], scannedAt: "2026-09-02T00:00:00Z" });
+    const html = renderChanges({ status: "ready", scope, changes: [change("blocked"), change("added")], scannedAt: "2026-09-02T00:00:00Z" }, new Set(["added"]));
     expect(html).toContain("需要处理");
     expect(html).toContain("无法解析内容");
     expect(html).toContain("预览发布</button>");
-    expect(html).toContain('data-action="preview" ');
+    expect(html).not.toContain('data-action="preview" disabled');
   });
 
   it("loads persisted changes for the first active scope", async () => {

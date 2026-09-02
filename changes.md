@@ -2,6 +2,7 @@
 
 ## 2026-09-02
 
+- Addressed release-preview review feedback: the enabled-preview test now supplies an actual selected change, release callbacks are invalidated when the user changes context, and a successful publication refreshes its scope while retaining the confirmation result. Release diff text now uses standard wrapping rules.
 - Continued the M2 release client flow: the workbench's selected-change bar now opens a protected release panel, accepts the bound GitHub Pages workspace path, renders the structured file diff preview, and requires a second explicit confirmation before calling publish. The panel reports the pushed commit SHA and refreshes the pending change list after completion.
 - Added client bridge coverage for confirmed publishing and updated workbench coverage so preview activates only after selecting a publishable change. Verified with `npm test -- --run`, `npm run build`, `cargo test --manifest-path backend/Cargo.toml`, and `git diff --check`.
 - Fixed a scan regression where a second scan could clear unconfirmed changes: source snapshots now remain the last published baseline until publication explicitly advances them, so repeated scans retain pending additions, updates, and deletions.

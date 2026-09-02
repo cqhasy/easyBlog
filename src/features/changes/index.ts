@@ -162,7 +162,12 @@ export function mountChanges(root: HTMLElement, api: ChangesApi = { listScopes, 
   let currentScopeId: ScopeId | undefined;
   let release: ReleaseState = { status: "idle" };
   let workspacePath = "";
+  let releaseGeneration = 0;
   const activeScope = () => state.status === "ready" || state.status === "empty" ? state.scope : undefined;
+  const invalidateRelease = () => {
+    releaseGeneration += 1;
+    release = { status: "idle" };
+  };
   const render = () => {
     const scope = activeScope();
     root.innerHTML = renderChanges(state, selected, scanning, scopes) + renderReleasePanel(release, workspacePath, selected.size, scope?.scope.target_id);
@@ -174,34 +179,49 @@ export function mountChanges(root: HTMLElement, api: ChangesApi = { listScopes, 
     if (state.status === "ready") selected = new Set(defaultSelectedChanges(state.changes).map((change) => change.id));
     render();
   });
-  const refresh = (requestedScopeId?: ScopeId) => refreshController.refresh(requestedScopeId ?? currentScopeId);
+  const refresh = (requestedScopeId?: ScopeId, preserveRelease = false) => {
+    if (!preserveRelease) invalidateRelease();
+    return refreshController.refresh(requestedScopeId ?? currentScopeId);
+  };
   root.addEventListener("click", (event) => {
     const action = (event.target as HTMLElement).closest<HTMLElement>("[data-action]")?.dataset.action;
     if (action === "retry") { void refresh(); return; }
-    if (action === "close-release") { release = { status: "idle" }; render(); return; }
-    if (action === "finish-release") { release = { status: "idle" }; void refresh(); return; }
-    if (action === "preview" && state.status === "ready") { release = { status: "configure" }; render(); root.querySelector<HTMLInputElement>("#release-workspace")?.focus(); return; }
+    if (action === "close-release") { invalidateRelease(); render(); return; }
+    if (action === "finish-release") { void refresh(); return; }
+    if (action === "preview" && state.status === "ready") { invalidateRelease(); release = { status: "configure" }; render(); root.querySelector<HTMLInputElement>("#release-workspace")?.focus(); return; }
     if (action === "run-preview" && state.status === "ready" && api.previewRelease) {
       const targetId = state.scope.scope.target_id;
       if (!targetId || !workspacePath.trim()) { release = { status: "error", message: "请输入已绑定 GitHub Pages 目标的本地工作区路径。" }; render(); return; }
       const target = { id: targetId, workspace_path: workspacePath.trim() };
+      const operationGeneration = ++releaseGeneration;
       release = { status: "previewing" }; render();
       void api.previewRelease({ scope_id: state.scope.scope.id, target, change_ids: [...selected] }).then((plan) => {
+        if (operationGeneration !== releaseGeneration) return;
         release = { status: "preview", plan, target };
-      }).catch((error) => { release = { status: "error", message: errorMessage(error, "发布预览没有完成") }; }).finally(render);
+      }).catch((error) => {
+        if (operationGeneration !== releaseGeneration) return;
+        release = { status: "error", message: errorMessage(error, "发布预览没有完成") };
+      }).finally(() => { if (operationGeneration === releaseGeneration) render(); });
       return;
     }
     if (action === "publish" && release.status === "preview" && api.publishRelease) {
       const { plan, target } = release;
+      const operationGeneration = ++releaseGeneration;
       release = { status: "publishing", plan, target }; render();
       void api.publishRelease({ scope_id: plan.batch.scope_id, target, change_ids: plan.batch.change_ids }).then((publication) => {
+        if (operationGeneration !== releaseGeneration) return;
         release = { status: "published", publication };
         selected.clear();
-      }).catch((error) => { release = { status: "error", message: errorMessage(error, "发布没有完成") }; }).finally(render);
+        void refresh(plan.batch.scope_id, true);
+      }).catch((error) => {
+        if (operationGeneration !== releaseGeneration) return;
+        release = { status: "error", message: errorMessage(error, "发布没有完成") };
+      }).finally(() => { if (operationGeneration === releaseGeneration) render(); });
       return;
     }
     if (action === "scan" && (state.status === "ready" || state.status === "empty") && !scanning) {
       const scope = state.scope;
+      invalidateRelease();
       const scanGeneration = refreshController.begin();
       scanning = true;
       render();
@@ -220,6 +240,7 @@ export function mountChanges(root: HTMLElement, api: ChangesApi = { listScopes, 
     if (input instanceof HTMLInputElement && input.dataset.action === "workspace-path") { workspacePath = input.value; return; }
     if (input instanceof HTMLSelectElement && input.dataset.action === "change-scope") { void refresh(input.value); return; }
     if (!(input instanceof HTMLInputElement) || !input.dataset.changeId) return;
+    invalidateRelease();
     if (input.checked) selected.add(input.dataset.changeId); else selected.delete(input.dataset.changeId);
     render();
   });

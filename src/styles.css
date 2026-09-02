@@ -205,7 +205,7 @@ time { color: #91a19b; font-size: 12px; white-space: nowrap; }
 .release-diff strong { color: #38574d; font-family: "Cascadia Mono", Consolas, monospace; font-size: 11px; overflow-wrap: anywhere; }
 .diff-kind { border-radius: 3px; font-size: 10px; font-weight: 700; padding: 3px 5px; text-transform: uppercase; }
 .diff-added { background: #e1f2e9; color: #257454; }.diff-modified { background: #fff1d9; color: #93611d; }.diff-deleted { background: #fde9e2; color: #a74f35; }
-.release-diff pre { color: #38554b; font-family: "Cascadia Mono", Consolas, monospace; font-size: 10px; line-height: 1.5; margin: 0; max-height: 260px; overflow: auto; padding: 11px; white-space: pre-wrap; word-break: break-word; }
+.release-diff pre { color: #38554b; font-family: "Cascadia Mono", Consolas, monospace; font-size: 10px; line-height: 1.5; margin: 0; max-height: 260px; overflow: auto; overflow-wrap: anywhere; padding: 11px; white-space: pre-wrap; }
 .release-panel footer { display: flex; gap: 9px; justify-content: flex-end; margin-top: 18px; }
 .release-panel code { background: #eaf2ee; color: #285c4d; font-family: "Cascadia Mono", Consolas, monospace; font-size: 11px; padding: 2px 4px; }
 
