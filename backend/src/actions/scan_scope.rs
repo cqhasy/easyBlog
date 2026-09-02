@@ -90,12 +90,9 @@ pub fn execute(
     let mut detected = compare::compare(&scope.id, &previous, &current);
     detected.extend(blocked);
     detected.sort_by(|left, right| left.source_path.cmp(&right.source_path));
-    snapshots
-        .replace(&scope.id, &current)
-        .map_err(|_| AppError::new("storage_error", "Snapshots could not be saved"))?;
     changes
-        .replace(&scope.id, &observed_at, &detected)
-        .map_err(|_| AppError::new("storage_error", "Changes could not be saved"))?;
+        .replace_scan_result(&scope.id, &observed_at, &current, &detected)
+        .map_err(|_| AppError::new("storage_error", "Scan results could not be saved"))?;
     Ok(crate::changes::change_set::ChangeSet {
         scope_id: scope.id,
         scanned_at: observed_at,

@@ -94,33 +94,41 @@ export function renderChanges(state: ChangesState, selected = new Set<string>(),
   const selectedCount = state.status === "ready" ? state.changes.filter((change) => selected.has(change.id)).length : 0;
   const body = state.status === "empty" ? `<section class="changes-empty"><span class="empty-mark" aria-hidden="true">✓</span><h2>没有待发布变更</h2><p>上次检测：${escapeHtml(formatScanTime(state.scannedAt))}</p></section>` : `<div class="changes-list">${renderGroups(state.changes, selected)}</div>`;
   const scopeOptions = (scopes.length ? scopes : [state.scope]).map((summary) => `<option value="${escapeHtml(summary.scope.id)}" ${summary.scope.id === state.scope.scope.id ? "selected" : ""}>${escapeHtml(summary.scope.name)}</option>`).join("");
-  return `<main class="changes-page" aria-labelledby="changes-title">${header}<section class="changes-toolbar" aria-label="检测控制"><div><label for="changes-scope">检测范围</label><select id="changes-scope" data-action="change-scope" ${scanning ? "disabled" : ""}>${scopeOptions}</select><span>${changeCount ? `发现 ${changeCount} 项待确认变更` : "检查此范围的新变化"}</span></div><button type="button" data-action="scan" ${scanning ? "disabled" : ""}>${scanning ? "正在检测..." : "立即检测"}</button></section>${body}<footer class="selection-bar ${selectedCount ? "selection-active" : ""}"><span>${selectedCount ? `已选择 ${selectedCount} 项` : "选择变更后可预览发布"}</span><button type="button" data-action="preview" ${selectedCount ? "" : "disabled"}>预览发布</button></footer></main>`;
+  return `<main class="changes-page" aria-labelledby="changes-title">${header}<section class="changes-toolbar" aria-label="检测控制"><div><label for="changes-scope">检测范围</label><select id="changes-scope" data-action="change-scope" ${scanning ? "disabled" : ""}>${scopeOptions}</select><span>${changeCount ? `发现 ${changeCount} 项待确认变更` : "检查此范围的新变化"}</span></div><button type="button" data-action="scan" ${scanning ? "disabled" : ""}>${scanning ? "正在检测..." : "立即检测"}</button></section>${body}<footer class="selection-bar ${selectedCount ? "selection-active" : ""}"><span>${selectedCount ? `已选择 ${selectedCount} 项` : "选择变更后可预览发布"}</span><button type="button" data-action="preview" disabled>预览发布</button></footer></main>`;
 }
 
 export type ChangesController = { refresh: () => void };
 
+type ChangesRefreshController = {
+  refresh: (requestedScopeId?: ScopeId) => Promise<void>;
+  begin: () => number;
+  isCurrent: (generation: number) => boolean;
+};
+
 export function createChangesRefreshController(
   api: ChangesApi,
   apply: (state: ChangesState, scopes: ScopeSummary[]) => void,
-): { refresh: (requestedScopeId?: ScopeId) => Promise<void> } {
+): ChangesRefreshController {
   let generation = 0;
+  const begin = () => ++generation;
+  const isCurrent = (requestGeneration: number) => requestGeneration === generation;
   const refresh = async (requestedScopeId?: ScopeId) => {
-    const currentGeneration = ++generation;
+    const currentGeneration = begin();
     apply({ status: "loading" }, []);
     try {
       const scopes = (await api.listScopes()).filter((summary) => summary.scope.lifecycle === "active");
       if (!scopes.length) {
-        if (currentGeneration === generation) apply({ status: "needs_scope" }, []);
+        if (isCurrent(currentGeneration)) apply({ status: "needs_scope" }, []);
         return;
       }
       const scope = scopes.find((summary) => summary.scope.id === requestedScopeId) ?? scopes[0];
       const changes = await api.listChanges(scope.scope.id);
-      if (currentGeneration === generation) apply(changes.length ? { status: "ready", scope, changes } : { status: "empty", scope }, scopes);
+      if (isCurrent(currentGeneration)) apply(changes.length ? { status: "ready", scope, changes } : { status: "empty", scope }, scopes);
     } catch (error) {
-      if (currentGeneration === generation) apply({ status: "error", message: errorMessage(error, "变更列表暂时无法读取") }, []);
+      if (isCurrent(currentGeneration)) apply({ status: "error", message: errorMessage(error, "变更列表暂时无法读取") }, []);
     }
   };
-  return { refresh };
+  return { refresh, begin, isCurrent };
 }
 
 export function mountChanges(root: HTMLElement, api: ChangesApi = { listScopes, scanScope, listChanges }): ChangesController {
@@ -128,25 +136,32 @@ export function mountChanges(root: HTMLElement, api: ChangesApi = { listScopes, 
   let selected = new Set<string>();
   let scanning = false;
   let scopes: ScopeSummary[] = [];
+  let currentScopeId: ScopeId | undefined;
   const render = () => { root.innerHTML = renderChanges(state, selected, scanning, scopes); };
   const refreshController = createChangesRefreshController(api, (nextState, nextScopes) => {
     state = nextState;
     scopes = nextScopes;
+    if (state.status === "ready" || state.status === "empty") currentScopeId = state.scope.scope.id;
     if (state.status === "ready") selected = new Set(defaultSelectedChanges(state.changes).map((change) => change.id));
     render();
   });
-  const refresh = (requestedScopeId?: ScopeId) => refreshController.refresh(requestedScopeId);
+  const refresh = (requestedScopeId?: ScopeId) => refreshController.refresh(requestedScopeId ?? currentScopeId);
   root.addEventListener("click", (event) => {
     const action = (event.target as HTMLElement).closest<HTMLElement>("[data-action]")?.dataset.action;
     if (action === "retry") { void refresh(); return; }
     if (action === "scan" && (state.status === "ready" || state.status === "empty") && !scanning) {
       const scope = state.scope;
+      const scanGeneration = refreshController.begin();
       scanning = true;
       render();
       void api.scanScope(scope.scope.id).then((result) => {
+        if (!refreshController.isCurrent(scanGeneration)) return;
         state = result.changes.length ? { status: "ready", scope, changes: result.changes, scannedAt: result.scanned_at } : { status: "empty", scope, scannedAt: result.scanned_at };
+        currentScopeId = scope.scope.id;
         selected = new Set(defaultSelectedChanges(result.changes).map((change) => change.id));
-      }).catch((error) => { state = { status: "error", message: errorMessage(error, "检测没有完成") }; }).finally(() => { scanning = false; render(); });
+      }).catch((error) => {
+        if (refreshController.isCurrent(scanGeneration)) state = { status: "error", message: errorMessage(error, "检测没有完成") };
+      }).finally(() => { scanning = false; render(); });
     }
   });
   root.addEventListener("change", (event) => {

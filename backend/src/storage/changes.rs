@@ -4,6 +4,7 @@ use std::sync::Mutex;
 use rusqlite::{params, Connection, Result};
 
 use crate::changes::change::{Change, ChangeKind};
+use crate::tracking::snapshot::Snapshot;
 
 pub struct ChangeRepository {
     connection: Mutex<Connection>,
@@ -24,10 +25,27 @@ impl ChangeRepository {
             .lock()
             .expect("change repository lock poisoned");
         let transaction = connection.transaction()?;
-        transaction.execute("DELETE FROM changes WHERE scope_id = ?1", [scope_id])?;
-        for change in changes {
-            transaction.execute("INSERT INTO changes (id, scope_id, change_kind, source_identity, source_path, previous_path, title, selected, blocked_reason, fingerprint, scanned_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)", params![change.id, change.scope_id, kind_name(&change.kind), change.source_identity, change.source_path, change.previous_path, change.title, change.selected, change.blocked_reason, change.snapshot.as_ref().map(|snapshot| snapshot.fingerprint.clone()), scanned_at])?;
+        replace_changes(&transaction, scope_id, scanned_at, changes)?;
+        transaction.commit()
+    }
+
+    pub fn replace_scan_result(
+        &self,
+        scope_id: &str,
+        scanned_at: &str,
+        snapshots: &[Snapshot],
+        changes: &[Change],
+    ) -> Result<()> {
+        let mut connection = self
+            .connection
+            .lock()
+            .expect("change repository lock poisoned");
+        let transaction = connection.transaction()?;
+        transaction.execute("DELETE FROM snapshots WHERE scope_id = ?1", [scope_id])?;
+        for snapshot in snapshots {
+            transaction.execute("INSERT INTO snapshots (scope_id, source_identity, source_path, title, fingerprint, observed_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)", params![snapshot.scope_id, snapshot.source_identity, snapshot.source_path, snapshot.title, snapshot.fingerprint, snapshot.observed_at])?;
         }
+        replace_changes(&transaction, scope_id, scanned_at, changes)?;
         transaction.commit()
     }
 
@@ -67,6 +85,19 @@ impl ChangeRepository {
             .collect::<Result<Vec<_>>>()?;
         Ok(changes)
     }
+}
+
+fn replace_changes(
+    transaction: &rusqlite::Transaction<'_>,
+    scope_id: &str,
+    scanned_at: &str,
+    changes: &[Change],
+) -> Result<()> {
+    transaction.execute("DELETE FROM changes WHERE scope_id = ?1", [scope_id])?;
+    for change in changes {
+        transaction.execute("INSERT INTO changes (id, scope_id, change_kind, source_identity, source_path, previous_path, title, selected, blocked_reason, fingerprint, scanned_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)", params![change.id, change.scope_id, kind_name(&change.kind), change.source_identity, change.source_path, change.previous_path, change.title, change.selected, change.blocked_reason, change.snapshot.as_ref().map(|snapshot| snapshot.fingerprint.clone()), scanned_at])?;
+    }
+    Ok(())
 }
 
 fn kind_name(kind: &ChangeKind) -> &'static str {
