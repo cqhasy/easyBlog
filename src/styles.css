@@ -26,6 +26,7 @@ input:focus { border-color: #3a9c86; box-shadow: 0 0 0 3px #3a9c8620; }
 button { background: #207663; border: 1px solid #207663; border-radius: 5px; color: #fff; font-weight: 650; min-height: 38px; padding: 0 15px; transition: background .16s ease, border-color .16s ease, color .16s ease, transform .16s ease; }
 button:hover { background: #175e4f; border-color: #175e4f; }
 button:active { transform: translateY(1px); }
+button:disabled { cursor: wait; opacity: .58; transform: none; }
 .sources-content { max-width: 960px; }
 .sources-status { color: #71827b; margin: 42px 0; }
 .source-list { list-style: none; margin: 0; padding: 0; }
@@ -46,7 +47,7 @@ time { color: #91a19b; font-size: 12px; white-space: nowrap; }
 .compact-source-field input { min-height: 36px; width: 190px; }
 .source-name-field input { width: 132px; }
 .compact-source-form button { min-height: 36px; white-space: nowrap; }
-.visually-hidden { height: 1px; margin: -1px; overflow: hidden; position: absolute; width: 1px; clip: rect(0 0 0 0); }
+.visually-hidden { clip-path: inset(50%); height: 1px; margin: -1px; overflow: hidden; position: absolute; width: 1px; }
 .scope-workspace { background: #fff; border: 1px solid #dbe6e0; border-radius: 7px; display: grid; grid-template-columns: minmax(310px, .72fr) minmax(560px, 1.28fr); margin-top: 24px; min-height: 650px; overflow: hidden; }
 .scope-sidebar { background: #f9fcfa; border-right: 1px solid #dfe8e3; padding: 18px 14px; }
 .sidebar-heading { align-items: center; color: #47665c; display: flex; font-size: 12px; font-weight: 700; justify-content: space-between; padding: 0 8px 14px; }
