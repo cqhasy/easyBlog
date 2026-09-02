@@ -2,6 +2,8 @@
 
 ## 2026-09-02
 
+- Recorded the Scope configuration review fixes on `feat/scope-add`: normalized include/exclude validation, recursive scope-overlap detection, optimistic revision checks for updates, accurate blocked-state labels, and guarded lifecycle actions.
+- Verified the Scope review fixes with `cargo fmt --manifest-path backend/Cargo.toml --all -- --check`, `cargo test --manifest-path backend/Cargo.toml`, `npm test`, `npm run build`, and `git diff --check`.
 - Added `docs/plans/v1-development-plan.md`, covering all v1 PRD capabilities, lifecycle gates, ownership tracks, dependency graph, parallel batches, tests, release readiness, and rollback.
 - Established six GitHub milestones for `cqhasy/easyBlog`: `M0 Foundation Contracts & Delivery Baseline`, `M1 Local Source Sync Vertical Slice`, `M2 GitHub Target & Release Pipeline`, `M3 Feishu Documents`, `M4 Feishu Wiki, Scheduling, Conflicts & Recovery`, and `M5 Release Readiness & v1 Sign-off`.
 - No milestone due dates or GitHub Issues were created; dates and task-level assignment are intentionally deferred until staffing and estimates are available.
