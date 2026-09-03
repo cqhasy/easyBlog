@@ -71,7 +71,10 @@ impl PublicationRepository {
     }
 
     pub fn mark_published(&self, batch_id: &str, published_at: &str) -> Result<()> {
-        self.connection.lock().expect("publication repository lock poisoned").execute("UPDATE publications SET state = 'published', published_at = ?2 WHERE batch_id = ?1 AND state = 'pending_push'", params![batch_id, published_at])?;
+        let changed = self.connection.lock().expect("publication repository lock poisoned").execute("UPDATE publications SET state = 'published', published_at = COALESCE(published_at, ?2) WHERE batch_id = ?1 AND state IN ('pending_push', 'published')", params![batch_id, published_at])?;
+        if changed != 1 {
+            return Err(Error::QueryReturnedNoRows);
+        }
         Ok(())
     }
 
@@ -81,12 +84,18 @@ impl PublicationRepository {
         commit_sha: &str,
         rolled_back_at: &str,
     ) -> Result<()> {
-        self.connection.lock().expect("publication repository lock poisoned").execute("UPDATE publications SET state = 'rolled_back', rollback_commit_sha = ?2, rolled_back_at = ?3 WHERE batch_id = ?1 AND state = 'rollback_pending'", params![batch_id, commit_sha, rolled_back_at])?;
+        let changed = self.connection.lock().expect("publication repository lock poisoned").execute("UPDATE publications SET state = 'rolled_back', rollback_commit_sha = ?2, rolled_back_at = COALESCE(rolled_back_at, ?3) WHERE batch_id = ?1 AND state IN ('rollback_pending', 'rolled_back')", params![batch_id, commit_sha, rolled_back_at])?;
+        if changed != 1 {
+            return Err(Error::QueryReturnedNoRows);
+        }
         Ok(())
     }
 
     pub fn mark_rollback_pending(&self, batch_id: &str, commit_sha: &str) -> Result<()> {
-        self.connection.lock().expect("publication repository lock poisoned").execute("UPDATE publications SET state = 'rollback_pending', rollback_commit_sha = ?2 WHERE batch_id = ?1 AND state = 'published'", params![batch_id, commit_sha])?;
+        let changed = self.connection.lock().expect("publication repository lock poisoned").execute("UPDATE publications SET state = 'rollback_pending', rollback_commit_sha = ?2 WHERE batch_id = ?1 AND state IN ('published', 'rollback_pending', 'rolled_back')", params![batch_id, commit_sha])?;
+        if changed != 1 {
+            return Err(Error::QueryReturnedNoRows);
+        }
         Ok(())
     }
 
@@ -221,6 +230,21 @@ mod tests {
 
         let older = repository.get("batch").unwrap().unwrap();
         assert!(!repository.is_latest_reversible(&older).unwrap());
+        drop(repository);
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn rejects_state_transitions_for_missing_or_incompatible_publications() {
+        let path = temp_db();
+        let repository = PublicationRepository::open(&path).unwrap();
+        insert_raw(&path, "published", "[]");
+
+        assert!(repository.mark_published("missing", "now").is_err());
+        assert!(repository
+            .mark_rolled_back("batch", "rollback", "now")
+            .is_err());
+
         drop(repository);
         std::fs::remove_file(path).unwrap();
     }

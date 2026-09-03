@@ -2,7 +2,6 @@ use chrono::{SecondsFormat, Utc};
 
 use crate::{
     actions::preview_release,
-    changes::change::ChangeKind,
     releases::{commit, push, stage},
     shared::errors::{AppError, AppResult},
     storage::{
@@ -59,9 +58,6 @@ pub fn execute(
         .list(&scope.id)
         .map_err(|_| AppError::new("storage_error", "Changes could not be loaded"))?;
     let selected = preview_release::select_pending_changes(&available, &batch.change_ids)?;
-    let baseline_before_publish = changes
-        .list_snapshots(&scope.id)
-        .map_err(|_| AppError::new("storage_error", "Snapshots could not be loaded"))?;
     preview_release::validate_publishable_source(&source)?;
     let checkout = Checkout::acquire(&target).map_err(preview_release::checkout_error)?;
     if scope.revision != batch.scope_revision
@@ -82,11 +78,14 @@ pub fn execute(
             .iter()
             .find(|transition| transition.source_identity == change.source_identity)
             .is_none_or(|transition| {
-                transition.after_fingerprint
+                transition
+                    .after
+                    .as_ref()
+                    .map(|snapshot| &snapshot.fingerprint)
                     != change
                         .snapshot
                         .as_ref()
-                        .map(|snapshot| snapshot.fingerprint.clone())
+                        .map(|snapshot| &snapshot.fingerprint)
             })
     }) {
         return Err(AppError::new(
@@ -94,7 +93,23 @@ pub fn execute(
             "Selected source content changed after preview",
         ));
     }
-    let files = preview_release::build_file_set(&source.path, &target, &selected)?;
+    let live_selected = selected
+        .iter()
+        .filter(|change| !matches!(change.kind, crate::changes::change::ChangeKind::Deleted))
+        .cloned()
+        .collect::<Vec<_>>();
+    let mut files = preview_release::build_file_set(&source.path, &target, &live_selected)?;
+    let operations = ledger
+        .load_operations(&batch.id)
+        .map_err(|_| AppError::new("storage_error", "Release operations could not be loaded"))?;
+    if operations.is_empty() {
+        return Err(AppError::new(
+            "release_legacy_unsupported",
+            "This release preview has no immutable operation ledger",
+        ));
+    }
+    preview_release::append_frozen_deletes(&mut files, &operations)?;
+    preview_release::validate_frozen_operations(checkout.root(), &files, &operations)?;
     if !ledger
         .begin_publish(&batch.id)
         .map_err(|_| AppError::new("storage_error", "Release preview could not be claimed"))?
@@ -122,7 +137,7 @@ pub fn execute(
             target_id: target.id.clone(),
             commit_sha: commit_sha.clone(),
             change_ids: batch.change_ids.clone(),
-            snapshots_before_publish: Some(baseline_before_publish.clone()),
+            snapshots_before_publish: None,
             state: PublicationState::PendingPush,
             published_at: None,
             rollback_commit_sha: None,
@@ -139,19 +154,8 @@ pub fn execute(
             AppError::new("storage_error", "Release commit could not be recorded")
         })?;
     push::execute(checkout.root())?;
-    let mut baseline = baseline_before_publish;
-    baseline.retain(|snapshot| {
-        !selected.iter().any(|change| {
-            matches!(change.kind, ChangeKind::Deleted)
-                && change.source_identity == snapshot.source_identity
-        })
-    });
-    for snapshot in selected.iter().filter_map(|change| change.snapshot.clone()) {
-        baseline.retain(|current| current.source_identity != snapshot.source_identity);
-        baseline.push(snapshot);
-    }
     changes
-        .apply_publication(&scope.id, &baseline, &batch.change_ids)
+        .finalize_release_baselines(&scope.id, &transitions)
         .map_err(|_| AppError::new("storage_error", "Published state could not be saved"))?;
     let published_at = Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true);
     publications
@@ -366,6 +370,7 @@ mod tests {
 
         crate::actions::rollback_publication::execute(
             &changes,
+            &ledger,
             &publications,
             &publication.batch_id,
             &target,

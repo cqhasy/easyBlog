@@ -208,9 +208,14 @@ fn migrate_release_ledger(connection: &Connection) -> Result<()> {
          CREATE TABLE IF NOT EXISTS release_source_transitions (
            batch_id TEXT NOT NULL REFERENCES release_batches(batch_id) ON DELETE CASCADE,
            source_identity TEXT NOT NULL,
-           source_path TEXT NOT NULL,
+           before_source_path TEXT,
+           before_title TEXT,
            before_fingerprint TEXT,
+           before_observed_at TEXT,
+           after_source_path TEXT,
+           after_title TEXT,
            after_fingerprint TEXT,
+           after_observed_at TEXT,
            PRIMARY KEY (batch_id, source_identity)
          );
          CREATE TABLE IF NOT EXISTS release_conflicts (
@@ -233,6 +238,25 @@ fn migrate_release_ledger(connection: &Connection) -> Result<()> {
             "ALTER TABLE release_batches ADD COLUMN change_ids TEXT NOT NULL DEFAULT '[]'",
             [],
         )?;
+    }
+    let mut statement = connection.prepare("PRAGMA table_info(release_source_transitions)")?;
+    let transition_columns = statement
+        .query_map([], |row| row.get::<_, String>(1))?
+        .collect::<Result<Vec<_>>>()?;
+    for (name, definition) in [
+        ("before_source_path", "TEXT"),
+        ("before_title", "TEXT"),
+        ("before_observed_at", "TEXT"),
+        ("after_source_path", "TEXT"),
+        ("after_title", "TEXT"),
+        ("after_observed_at", "TEXT"),
+    ] {
+        if !transition_columns.iter().any(|column| column == name) {
+            connection.execute(
+                &format!("ALTER TABLE release_source_transitions ADD COLUMN {name} {definition}"),
+                [],
+            )?;
+        }
     }
     Ok(())
 }

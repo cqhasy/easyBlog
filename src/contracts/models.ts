@@ -60,7 +60,7 @@ export interface Publication {
   commit_sha: string;
   published_at: string;
 }
-export type PublicationState = "pending_push" | "published" | "rollback_pending" | "rolled_back";
+export type PublicationState = "pending_push" | "published" | "rollback_pending" | "rolled_back" | "recovery_required" | "legacy";
 export interface PublicationRecord {
   batch_id: ReleaseBatchId;
   commit_sha: string;
@@ -71,6 +71,8 @@ export interface PublicationRecord {
   published_at: string | null;
   rollback_commit_sha: string | null;
   rolled_back_at: string | null;
+  rollback_available?: boolean;
+  recovery_reason?: string | null;
 }
 
 export interface Source {

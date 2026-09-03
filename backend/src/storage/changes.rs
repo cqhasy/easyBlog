@@ -4,6 +4,7 @@ use std::sync::Mutex;
 use rusqlite::{params, Connection, Result};
 
 use crate::changes::change::{Change, ChangeKind};
+use crate::storage::ledger::SourceTransition;
 use crate::tracking::snapshot::Snapshot;
 
 pub struct ChangeRepository {
@@ -160,6 +161,75 @@ impl ChangeRepository {
             transaction.execute("INSERT INTO snapshots (scope_id, source_identity, source_path, title, fingerprint, observed_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)", params![snapshot.scope_id, snapshot.source_identity, snapshot.source_path, snapshot.title, snapshot.fingerprint, snapshot.observed_at])?;
         }
         transaction.execute("DELETE FROM changes WHERE scope_id = ?1", [scope_id])?;
+        transaction.commit()
+    }
+
+    pub fn restore_release_baselines(
+        &self,
+        scope_id: &str,
+        transitions: &[SourceTransition],
+    ) -> Result<()> {
+        self.apply_release_transitions(scope_id, transitions, false)
+    }
+
+    pub fn finalize_release_baselines(
+        &self,
+        scope_id: &str,
+        transitions: &[SourceTransition],
+    ) -> Result<()> {
+        self.apply_release_transitions(scope_id, transitions, true)
+    }
+
+    fn apply_release_transitions(
+        &self,
+        scope_id: &str,
+        transitions: &[SourceTransition],
+        use_after: bool,
+    ) -> Result<()> {
+        let mut connection = self
+            .connection
+            .lock()
+            .expect("change repository lock poisoned");
+        let transaction = connection.transaction()?;
+        for transition in transitions {
+            let snapshot = if use_after {
+                transition.after.as_ref()
+            } else {
+                transition.before.as_ref()
+            };
+            match snapshot {
+                Some(fingerprint) => {
+                    transaction.execute(
+                        "INSERT INTO snapshots (scope_id, source_identity, source_path, title, fingerprint, observed_at)
+                         VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+                         ON CONFLICT(scope_id, source_identity) DO UPDATE SET source_path = excluded.source_path, title = excluded.title, fingerprint = excluded.fingerprint, observed_at = excluded.observed_at",
+                        params![scope_id, transition.source_identity, fingerprint.source_path, fingerprint.title, fingerprint.fingerprint, fingerprint.observed_at],
+                    )?;
+                }
+                None => {
+                    transaction.execute(
+                        "DELETE FROM snapshots WHERE scope_id = ?1 AND source_identity = ?2",
+                        params![scope_id, transition.source_identity],
+                    )?;
+                }
+            }
+            if use_after {
+                match snapshot {
+                    Some(snapshot) => {
+                        transaction.execute(
+                            "DELETE FROM changes WHERE scope_id = ?1 AND source_identity = ?2 AND fingerprint = ?3",
+                            params![scope_id, transition.source_identity, snapshot.fingerprint],
+                        )?;
+                    }
+                    None => {
+                        transaction.execute(
+                            "DELETE FROM changes WHERE scope_id = ?1 AND source_identity = ?2 AND change_kind = 'deleted'",
+                            params![scope_id, transition.source_identity],
+                        )?;
+                    }
+                }
+            }
+        }
         transaction.commit()
     }
 }
