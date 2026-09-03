@@ -3,6 +3,7 @@
 ## 2026-09-02
 
 - Bounded managed Git subprocess lifetime for GitHub targets. Clone, fetch, remote verification, target validation, protected-workspace synchronization, staging, commit, push, and rollback now use one timeout-controlled runner that terminates and reaps a child before returning. Timeout errors map to the actionable, credential-safe `git_timeout` contract, and deterministic local tests cover timeout reporting plus workspace lock release and retry.
+- Added explicit publishing-target configuration for connected GitHub repositories. Authors now choose either the GitHub Pages or Astro content-collections adapter and persist article/resource directories without modifying the managed checkout. Initialization is separately previewed, requires confirmation on a clean workspace, and creates only missing adapter-owned paths; unconfigured targets cannot bind scopes, preview releases, or publish.
 
 - Hardened GitHub repository connection identity and checkout synchronization: repository names now persist and compare case-insensitively while preserving branch case, failed Target persistence removes its new managed clone, and ready workspaces synchronize only the configured default branch against `origin/<default-branch>`. GitHub authorization and repository reload requests now ignore stale responses and disable repeated reload while pending. The M2 plan now consistently uses one release batch per configured Scope. Shared Git subprocess timeouts, termination, and reaping are tracked separately in #38.
 

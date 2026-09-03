@@ -1,5 +1,6 @@
 pub mod add_source;
 pub mod configure_scope;
+pub mod configure_target;
 pub mod connect_target;
 pub mod github_auth;
 pub mod list_sources;

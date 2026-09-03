@@ -14,10 +14,10 @@ describe("releases bridge", () => {
     expect(invoke).toHaveBeenCalledWith("preview_release", { input: { scope_id: "scope-1", change_ids: ["change-1"] } });
   });
 
-  it("publishes only an explicit confirmed selection", async () => {
+  it("publishes only the persisted preview batch", async () => {
     invoke.mockResolvedValue({ commit_sha: "abc" });
-    await publishRelease({ scope_id: "scope-1", change_ids: ["change-1"] });
-    expect(invoke).toHaveBeenCalledWith("publish_release", { input: { scope_id: "scope-1", change_ids: ["change-1"] } });
+    await publishRelease({ batch_id: "batch-1" });
+    expect(invoke).toHaveBeenCalledWith("publish_release", { input: { batch_id: "batch-1" } });
   });
 
   it("lists and recovers publication records through the stored target", async () => {

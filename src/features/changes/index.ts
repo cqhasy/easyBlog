@@ -12,7 +12,7 @@ export type ChangesApi = {
   listChanges: (scopeId: ScopeId) => Promise<Change[]>;
   listTargets?: () => Promise<ConnectedTarget[]>;
   previewRelease?: (input: { scope_id: ScopeId; change_ids: string[] }) => Promise<ReleasePlan>;
-  publishRelease?: (input: { scope_id: ScopeId; change_ids: string[] }) => Promise<Publication>;
+  publishRelease?: (input: { batch_id: string }) => Promise<Publication>;
 };
 
 export type ChangesState =
@@ -118,7 +118,7 @@ function renderReleasePanel(release: ReleaseState, connectedTarget: ConnectedTar
   const disabled = !connectedTarget || !targetId || release.status === "previewing" || release.status === "publishing";
   const plan = release.status === "preview" || release.status === "publishing" ? release.plan : undefined;
   const diffs = plan ? `<div class="release-diffs">${plan.diffs.map((diff) => `<article class="release-diff"><header><strong>${escapeHtml(diff.path)}</strong><span class="diff-kind diff-${diff.kind}">${escapeHtml(diff.kind)}</span></header><pre>${escapeHtml(diff.patch)}</pre></article>`).join("")}</div>` : "";
-  return `<section class="release-panel" aria-labelledby="release-title"><header><div><p class="eyebrow">EASYBLOG / RELEASE</p><h2 id="release-title">${plan ? "确认发布内容" : "预览发布"}</h2></div><button type="button" class="icon-button close-button" data-action="close-release" aria-label="关闭发布预览">×</button></header><p class="release-intro">本次将处理 ${selectedCount} 项变更。发布前会安全同步 GitHub 的最新状态。</p>${connectedTarget ? `<p class="release-target"><strong>${escapeHtml(connectedTarget.repository)}</strong><span>${escapeHtml(connectedTarget.default_branch)} · ${connectedTarget.visibility === "private" ? "私有仓库" : "公开仓库"}</span></p>` : ""}${targetId ? connectedTarget ? "" : "<p class=\"release-error\">找不到当前范围绑定的发布目标，请重新绑定范围。</p>" : "<p class=\"release-error\">当前范围尚未绑定发布目标。请前往内容来源连接 GitHub 仓库并绑定范围。</p>"}${error}${plan ? `<p class="release-summary">${plan.diffs.length} 个目标文件${plan.needs_configuration ? "，包含首次发布配置" : ""}。</p>${diffs}<footer><button type="button" class="secondary-button" data-action="close-release" ${release.status === "publishing" ? "disabled" : ""}>返回修改</button><button type="button" data-action="publish" ${release.status === "publishing" ? "disabled" : ""}>${release.status === "publishing" ? "正在提交并推送..." : "确认发布"}</button></footer>` : `<footer><button type="button" class="secondary-button" data-action="close-release">取消</button><button type="button" data-action="run-preview" ${disabled ? "disabled" : ""}>${release.status === "previewing" ? "正在生成预览..." : "生成预览"}</button></footer>`}</section>`;
+  return `<section class="release-panel" aria-labelledby="release-title"><header><div><p class="eyebrow">EASYBLOG / RELEASE</p><h2 id="release-title">${plan ? "确认发布内容" : "预览发布"}</h2></div><button type="button" class="icon-button close-button" data-action="close-release" aria-label="关闭发布预览">×</button></header><p class="release-intro">本次将处理 ${selectedCount} 项变更。发布前会安全同步 GitHub 的最新状态。</p>${connectedTarget ? `<p class="release-target"><strong>${escapeHtml(connectedTarget.repository)}</strong><span>${escapeHtml(connectedTarget.default_branch)} · ${connectedTarget.visibility === "private" ? "私有仓库" : "公开仓库"}</span></p>` : ""}${targetId ? connectedTarget ? "" : "<p class=\"release-error\">找不到当前范围绑定的发布目标，请重新绑定范围。</p>" : "<p class=\"release-error\">当前范围尚未绑定发布目标。请前往内容来源连接 GitHub 仓库并绑定范围。</p>"}${error}${plan ? `<p class="release-summary">${plan.diffs.length} 个目标文件。</p>${diffs}<footer><button type="button" class="secondary-button" data-action="close-release" ${release.status === "publishing" ? "disabled" : ""}>返回修改</button><button type="button" data-action="publish" ${release.status === "publishing" ? "disabled" : ""}>${release.status === "publishing" ? "正在提交并推送..." : "确认发布"}</button></footer>` : `<footer><button type="button" class="secondary-button" data-action="close-release">取消</button><button type="button" data-action="run-preview" ${disabled ? "disabled" : ""}>${release.status === "previewing" ? "正在生成预览..." : "生成预览"}</button></footer>`}</section>`;
 }
 
 export type ChangesController = { refresh: () => void };
@@ -215,7 +215,7 @@ export function mountChanges(root: HTMLElement, api: ChangesApi = { listScopes, 
       const { plan, target } = release;
       const operationGeneration = ++releaseGeneration;
       release = { status: "publishing", plan, target }; render();
-      void api.publishRelease({ scope_id: plan.batch.scope_id, change_ids: plan.batch.change_ids }).then((publication) => {
+      void api.publishRelease({ batch_id: plan.batch.id }).then((publication) => {
         if (operationGeneration !== releaseGeneration) return;
         release = { status: "published", publication };
         selected.clear();

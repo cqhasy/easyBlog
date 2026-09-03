@@ -1,15 +1,23 @@
 use std::{collections::BTreeSet, path::Path};
 
+use chrono::{SecondsFormat, Utc};
+
 use crate::{
     changes::change::{Change, ChangeKind},
     content::normalize_local_markdown,
+    providers::git::GitCommands,
     providers::local::reader::LocalReader,
     releases::{FileSet, PlannedFile, PlannedFileContents, ReleaseBatch, ReleasePlan},
     scopes::scope::Scope,
     shared::errors::{AppError, AppResult},
     sources::source::Source,
-    storage::{changes::ChangeRepository, scopes::ScopeRepository, sources::SourceRepository},
-    targets::{Target, Template},
+    storage::{
+        changes::ChangeRepository,
+        ledger::{LedgerBatch, LedgerRepository, PreviewRecord, SourceTransition},
+        scopes::ScopeRepository,
+        sources::SourceRepository,
+    },
+    targets::{Target, TargetState, Template},
     workspace::Checkout,
 };
 
@@ -23,6 +31,7 @@ pub fn execute(
     sources: &SourceRepository,
     scopes: &ScopeRepository,
     changes: &ChangeRepository,
+    ledger: &LedgerRepository,
     input: PreviewReleaseInput,
 ) -> AppResult<ReleasePlan> {
     let scope = scopes
@@ -30,6 +39,12 @@ pub fn execute(
         .map_err(|_| AppError::new("storage_error", "Scope could not be loaded"))?
         .ok_or_else(|| AppError::new("scope_not_found", "Scope no longer exists"))?;
     validate_scope_target(&scope, &input.target)?;
+    if input.target.state != TargetState::Ready || input.target.adapter.is_none() {
+        return Err(AppError::new(
+            "target_needs_configuration",
+            "Configure this publishing target before previewing a release",
+        ));
+    }
     let available = changes
         .list(&scope.id)
         .map_err(|_| AppError::new("storage_error", "Changes could not be loaded"))?;
@@ -41,25 +56,69 @@ pub fn execute(
     validate_publishable_source(&source)?;
     let checkout = Checkout::acquire(&input.target).map_err(checkout_error)?;
     let files = build_file_set(&source.path, &input.target, &selected)?;
-    let needs_configuration = matches!(
-        crate::targets::check(&input.target),
-        crate::targets::TargetCheck::Ready {
-            needs_configuration: true
-        }
-    );
     let batch = ReleaseBatch {
         id: uuid::Uuid::new_v4().to_string(),
-        scope_id: scope.id,
+        scope_id: scope.id.clone(),
         target_id: input.target.id.clone(),
         change_ids: input.change_ids,
     };
-    ReleasePlan::new(
-        batch.id.clone(),
-        batch,
-        needs_configuration,
-        &files,
-        checkout.root(),
-    )
+    let snapshots = changes
+        .list_snapshots(&scope.id)
+        .map_err(|_| AppError::new("storage_error", "Snapshots could not be loaded"))?;
+    let now = Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true);
+    let head = GitCommands::commit_sha(checkout.root()).map_err(|_| {
+        AppError::new(
+            "target_unavailable",
+            "The target workspace has no publishable Git commit",
+        )
+    })?;
+    let source_transitions = selected
+        .iter()
+        .map(|change| SourceTransition {
+            source_identity: change.source_identity.clone(),
+            source_path: change.source_path.clone(),
+            before_fingerprint: snapshots
+                .iter()
+                .find(|snapshot| snapshot.source_identity == change.source_identity)
+                .map(|snapshot| snapshot.fingerprint.clone()),
+            after_fingerprint: change
+                .snapshot
+                .as_ref()
+                .map(|snapshot| snapshot.fingerprint.clone()),
+        })
+        .collect();
+    ledger
+        .create_preview(&PreviewRecord {
+            batch: LedgerBatch {
+                id: batch.id.clone(),
+                scope_id: scope.id.clone(),
+                target_id: input.target.id.clone(),
+                change_ids: batch.change_ids.clone(),
+                scope_revision: scope.revision,
+                target_sequence_before: 0,
+                target_head_before: head,
+                state: crate::releases::BatchState::Previewed,
+                created_at: now.clone(),
+                previewed_at: Some(now),
+                commit_sha: None,
+                published_at: None,
+                rollback_commit_sha: None,
+                rolled_back_at: None,
+                failure_code: None,
+            },
+            bindings: vec![],
+            revisions: vec![],
+            operations: vec![],
+            binding_transitions: vec![],
+            source_transitions,
+        })
+        .map_err(|_| {
+            AppError::new(
+                "release_preview_conflict",
+                "The target changed or already has a release preview",
+            )
+        })?;
+    ReleasePlan::new(batch.id.clone(), batch, false, &files, checkout.root())
 }
 
 pub(crate) fn validate_scope_target(scope: &Scope, target: &Target) -> AppResult<()> {
@@ -138,7 +197,15 @@ pub(crate) fn build_file_set(
 ) -> AppResult<FileSet> {
     let reader = LocalReader::new(source_root)
         .map_err(|_| AppError::new("not_readable", "Source directory cannot be read"))?;
-    let template = Template::new(target.layout.clone());
+    let template = Template::new(
+        target.adapter.clone().ok_or_else(|| {
+            AppError::new(
+                "target_needs_configuration",
+                "Configure this publishing target before previewing a release",
+            )
+        })?,
+        target.layout.clone(),
+    );
     let mut files = FileSet::default();
     for change in changes {
         if matches!(change.kind, ChangeKind::Deleted) {
@@ -206,20 +273,6 @@ pub(crate) fn build_file_set(
             )?;
         }
     }
-    if matches!(
-        crate::targets::check(target),
-        crate::targets::TargetCheck::Ready {
-            needs_configuration: true
-        }
-    ) {
-        insert(
-            &mut files,
-            PlannedFile {
-                path: ".github/easyblog.yml".into(),
-                contents: PlannedFileContents::Text(template.configuration()),
-            },
-        )?;
-    }
     Ok(files)
 }
 
@@ -260,6 +313,7 @@ mod tests {
         changes::change::{Change, ChangeKind},
         scopes::scope::{Scope, ScopeLifecycle},
         sources::source::Source,
+        storage::targets::{ConnectedTarget, TargetRepository},
     };
 
     use super::*;
@@ -278,12 +332,13 @@ mod tests {
     }
 
     #[test]
-    fn previews_rendered_articles_resources_and_first_publish_configuration_without_writing() {
+    fn previews_configured_articles_and_resources_without_writing() {
         let root = std::env::temp_dir().join(format!("easyblog-preview-{}", uuid::Uuid::new_v4()));
         let source_root = root.join("source");
         let target_root = root.join("target");
         fs::create_dir_all(source_root.join("media")).unwrap();
         fs::create_dir_all(target_root.join("_posts")).unwrap();
+        fs::create_dir_all(target_root.join("assets/easyblog")).unwrap();
         fs::write(
             source_root.join("hello.md"),
             "# Hello\n![cover](media/cover.png)\n",
@@ -291,11 +346,39 @@ mod tests {
         .unwrap();
         fs::write(source_root.join("media/cover.png"), [1_u8, 2, 3]).unwrap();
         git(&target_root, &["init"]);
+        fs::write(target_root.join(".gitkeep"), "").unwrap();
+        git(&target_root, &["add", "."]);
+        git(
+            &target_root,
+            &[
+                "-c",
+                "user.name=easyBlog test",
+                "-c",
+                "user.email=test@example.com",
+                "commit",
+                "-m",
+                "Initial",
+            ],
+        );
 
         let database = root.join("easyblog.sqlite");
         let sources = SourceRepository::open(&database).unwrap();
         let scopes = ScopeRepository::open(&database).unwrap();
         let changes = ChangeRepository::open(&database).unwrap();
+        let ledger = crate::storage::ledger::LedgerRepository::open(&database).unwrap();
+        let targets = TargetRepository::open(&database).unwrap();
+        let target = Target {
+            state: TargetState::Ready,
+            adapter: Some(crate::targets::PublishingAdapter::GithubPages),
+            ..Target::new("target", &target_root)
+        };
+        targets
+            .insert(&ConnectedTarget {
+                target: target.clone(),
+                name: "Target".into(),
+                created_at: "now".into(),
+            })
+            .unwrap();
         sources
             .insert(&Source {
                 id: "source".into(),
@@ -346,9 +429,10 @@ mod tests {
             &sources,
             &scopes,
             &changes,
+            &ledger,
             PreviewReleaseInput {
                 scope_id: "scope".into(),
-                target: Target::new("target", &target_root),
+                target,
                 change_ids: vec!["change".into()],
             },
         )
@@ -358,17 +442,13 @@ mod tests {
             plan.status,
             crate::releases::ReleasePreviewStatus::AwaitingConfirmation
         );
-        assert!(plan.needs_configuration);
+        assert!(!plan.needs_configuration);
         assert_eq!(
             plan.diffs
                 .iter()
                 .map(|diff| diff.path.to_string_lossy().replace('\\', "/"))
                 .collect::<Vec<_>>(),
-            vec![
-                ".github/easyblog.yml",
-                "_posts/hello.md",
-                "assets/easyblog/hello/cover.png"
-            ]
+            vec!["_posts/hello.md", "assets/easyblog/hello/cover.png"]
         );
         assert!(plan
             .diffs
@@ -378,11 +458,12 @@ mod tests {
             .diffs
             .iter()
             .any(|diff| diff.patch == "Binary file (3 bytes)\n"));
-        assert!(!target_root.join(".github/easyblog.yml").exists());
         assert!(!target_root.join("_posts/hello.md").exists());
         assert!(crate::workspace::WorkingTree::require_clean(&target_root).is_ok());
 
         drop(changes);
+        drop(ledger);
+        drop(targets);
         drop(scopes);
         drop(sources);
         fs::remove_dir_all(root).unwrap();
