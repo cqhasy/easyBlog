@@ -1,7 +1,7 @@
 import { addSource, getSourceChildren, listScopes, listSources, saveScope, setScopeLifecycle } from "../../bridge/sources";
-import { connectTarget, listGithubRepositories, listTargets, refreshGithubRepositoryPermissions } from "../../bridge/targets";
+import { connectTarget, initializeTarget, inspectTargetConfiguration, listGithubRepositories, listTargets, previewTargetInitialization, refreshGithubRepositoryPermissions, saveTargetConfiguration } from "../../bridge/targets";
 import type { AddSourceInput } from "../../bridge/sources";
-import type { ConnectedTarget, GithubRepository, SaveScopeInput, Scope, ScopeLifecycle, ScopeSelection, ScopeSummary, Source, SourceNodeRef, SourceTreeNode } from "../../contracts";
+import type { ConnectedTarget, GithubRepository, InitializationPreview, LayoutCandidate, SaveScopeInput, Scope, ScopeLifecycle, ScopeSelection, ScopeSummary, Source, SourceNodeRef, SourceTreeNode } from "../../contracts";
 
 export const sourcesFeature = "sources";
 
@@ -16,6 +16,10 @@ export type SourcesApi = {
   listGithubRepositories?: () => Promise<GithubRepository[]>;
   refreshGithubRepositoryPermissions?: () => Promise<GithubRepository[]>;
   connectTarget?: (input: GithubRepository) => Promise<ConnectedTarget>;
+  inspectTargetConfiguration?: (targetId: string) => Promise<LayoutCandidate[]>;
+  saveTargetConfiguration?: (input: { target_id: string; adapter: "github_pages" | "astro_content"; posts_directory: string; resources_directory: string }) => Promise<ConnectedTarget>;
+  previewTargetInitialization?: (targetId: string) => Promise<InitializationPreview>;
+  initializeTarget?: (targetId: string) => Promise<ConnectedTarget>;
 };
 
 export type SourcesState =
@@ -23,6 +27,12 @@ export type SourcesState =
   | { status: "empty" }
   | { status: "ready"; sources: Source[] }
   | { status: "error"; message: string };
+
+type TargetConfigurationForm = {
+  adapter: "github_pages" | "astro_content";
+  postsDirectory: string;
+  resourcesDirectory: string;
+};
 
 function errorMessage(error: unknown, fallback: string): string {
   if (error instanceof Error && error.message.trim()) return error.message;
@@ -91,6 +101,14 @@ export function createRepositoryRefreshController(
     }
   };
   return { refresh, isLoading: () => loading };
+}
+
+export function createTargetConfigurationRequestController() {
+  let generation = 0;
+  return {
+    begin: () => ++generation,
+    isCurrent: (requestGeneration: number) => requestGeneration === generation,
+  };
 }
 
 function escapeHtml(value: string): string {
@@ -173,7 +191,7 @@ function renderEditor(editor: EditorState | undefined, targets: ConnectedTarget[
 
 export function mountSources(
   root: HTMLElement,
-  api: SourcesApi = { listSources, addSource, listScopes, saveScope, setScopeLifecycle, getSourceChildren, listTargets, listGithubRepositories, refreshGithubRepositoryPermissions, connectTarget },
+  api: SourcesApi = { listSources, addSource, listScopes, saveScope, setScopeLifecycle, getSourceChildren, listTargets, listGithubRepositories, refreshGithubRepositoryPermissions, connectTarget, inspectTargetConfiguration, saveTargetConfiguration, previewTargetInitialization, initializeTarget },
   onScopesChanged: () => void = () => undefined,
 ): void {
   let state: SourcesState = { status: "loading" };
@@ -185,15 +203,23 @@ export function mountSources(
   let targetMessage = "";
   let connectingTarget = false;
   let repositoriesLoading = false;
+  let configuringTarget: ConnectedTarget | undefined;
+  let candidates: LayoutCandidate[] = [];
+  let configurationForm: TargetConfigurationForm | undefined;
+  let initialization: InitializationPreview | undefined;
+  let configurationPending = false;
+  const configurationRequestController = createTargetConfigurationRequestController();
   const render = () => {
     if (state.status !== "ready") {
       root.innerHTML = renderSources(state);
       return;
     }
     const repositoryOptions = repositories.length ? repositories.map((repo) => `<option value="${escapeHtml(repo.repository)}" ${repo.repository === selectedRepository ? "selected" : ""}>${escapeHtml(repo.repository)} · ${repo.visibility === "private" ? "私有" : "公开"} · ${escapeHtml(repo.default_branch)}</option>`).join("") : '<option value="">没有可连接的仓库</option>';
-    const targetRows = targets.map((target) => `<li><span><strong>${escapeHtml(target.repository)}</strong><small>${escapeHtml(target.default_branch)} · ${target.visibility === "private" ? "私有" : "公开"}</small></span><small>${target.state === "needs_configuration" ? "已连接，等待配置发布规则" : target.state === "ready" ? "已准备，可绑定范围" : "需要重新连接或修复"}</small></li>`).join("");
+    const targetRows = targets.map((target) => `<li><span><strong>${escapeHtml(target.repository)}</strong><small>${escapeHtml(target.default_branch)} · ${target.visibility === "private" ? "私有" : "公开"}${target.adapter ? ` · ${target.adapter === "astro_content" ? "Astro" : "GitHub Pages"}` : ""}</small></span><small>${target.state === "needs_configuration" ? "已连接，等待配置发布规则" : target.state === "ready" ? "已准备，可绑定范围" : "需要重新连接或修复"}</small>${target.state === "needs_reconnect" || target.state === "needs_recovery" ? "" : `<button class="secondary-button" type="button" data-action="configure-target" data-target-id="${escapeHtml(target.id)}">配置发布规则</button>`}</li>`).join("");
+    const selectedCandidate = candidates.find((candidate) => candidate.adapter === configurationForm?.adapter);
+    const configurationPanel = configuringTarget ? `<section class="target-configuration" aria-label="发布规则配置"><header><div><strong>配置 ${escapeHtml(configuringTarget.repository)}</strong><span>保存规则不会创建文件或提交更改。</span></div><button class="icon-button" type="button" data-action="close-target-configuration" aria-label="关闭发布规则配置" title="关闭">x</button></header><form id="target-configuration-form"><label>发布适配器<select name="adapter">${candidates.map((candidate) => `<option value="${candidate.adapter}" ${candidate.adapter === configurationForm?.adapter ? "selected" : ""}>${candidate.adapter === "astro_content" ? "Astro content collections" : "GitHub Pages"}</option>`).join("")}</select></label><p class="target-candidate-reason">${escapeHtml(selectedCandidate?.reason ?? "正在检查仓库布局...")}</p><label>文章目录<input name="posts-directory" required value="${escapeHtml(configurationForm?.postsDirectory ?? configuringTarget.layout.posts_directory)}" /></label><label>资源目录<input name="resources-directory" required value="${escapeHtml(configurationForm?.resourcesDirectory ?? configuringTarget.layout.resources_directory)}" /></label><footer><button type="submit" ${configurationPending ? "disabled" : ""}>${configurationPending ? "正在保存..." : "保存发布规则"}</button></footer></form>${initialization ? `<div class="initialization-preview"><strong>确认初始化</strong><p>将仅创建以下目录和配置文件：</p><ul>${initialization.files.map((file) => `<li>${escapeHtml(file)}</li>`).join("")}</ul><button type="button" data-action="confirm-target-initialization" ${configurationPending ? "disabled" : ""}>确认创建</button></div>` : ""}</section>` : "";
     const connectionDisabled = connectingTarget || !selectedRepository ? "disabled" : "";
-    root.innerHTML = `<section class="sources-page scope-app" aria-labelledby="sources-title"><header class="workspace-header"><div><p class="eyebrow">EASYBLOG / SOURCES</p><h1 id="sources-title">内容来源</h1><p class="sources-subtitle">整理本地内容，并定义每个目录的同步范围。</p></div><form class="source-form compact-source-form" id="add-source-form"><label class="compact-source-field"><span class="visually-hidden">目录路径</span><input name="path" required aria-label="目录路径" placeholder="本地目录路径" /></label><label class="compact-source-field source-name-field"><span class="visually-hidden">显示名称</span><input name="name" aria-label="显示名称（可选）" placeholder="显示名称（可选）" /></label><button type="submit">添加来源</button></form></header><section class="target-connect"><div><strong>GitHub 发布目标</strong><span>${targets.length ? `${targets.length} 个已连接` : "选择仓库后由 easyBlog 自动准备"}</span></div><form id="connect-target-form"><select name="repository" aria-label="GitHub 仓库" ${connectingTarget || repositoriesLoading ? "disabled" : ""}>${repositoryOptions}</select><button type="button" class="secondary-button" data-action="refresh-repositories" ${connectingTarget || repositoriesLoading ? "disabled" : ""}>${repositoriesLoading ? "正在加载..." : "重新加载"}</button><button type="submit" ${connectionDisabled}>${connectingTarget ? "正在连接..." : "连接仓库"}</button></form>${targetMessage ? `<p class="target-message" role="status">${escapeHtml(targetMessage)}</p>` : ""}${targetRows ? `<ul class="target-list">${targetRows}</ul>` : ""}</section><div class="scope-workspace"><main class="scope-sidebar"><div class="sidebar-heading"><div><span>来源目录</span><small>${state.sources.length} 个来源</small></div></div>${state.sources.map((source) => renderScopeList(source, scopes)).join("")}</main>${renderEditor(editor, targets)}</div></section>`;
+    root.innerHTML = `<section class="sources-page scope-app" aria-labelledby="sources-title"><header class="workspace-header"><div><p class="eyebrow">EASYBLOG / SOURCES</p><h1 id="sources-title">内容来源</h1><p class="sources-subtitle">整理本地内容，并定义每个目录的同步范围。</p></div><form class="source-form compact-source-form" id="add-source-form"><label class="compact-source-field"><span class="visually-hidden">目录路径</span><input name="path" required aria-label="目录路径" placeholder="本地目录路径" /></label><label class="compact-source-field source-name-field"><span class="visually-hidden">显示名称</span><input name="name" aria-label="显示名称（可选）" placeholder="显示名称（可选）" /></label><button type="submit">添加来源</button></form></header><section class="target-connect"><div><strong>GitHub 发布目标</strong><span>${targets.length ? `${targets.length} 个已连接` : "选择仓库后由 easyBlog 自动准备"}</span></div><form id="connect-target-form"><select name="repository" aria-label="GitHub 仓库" ${connectingTarget || repositoriesLoading ? "disabled" : ""}>${repositoryOptions}</select><button type="button" class="secondary-button" data-action="refresh-repositories" ${connectingTarget || repositoriesLoading ? "disabled" : ""}>${repositoriesLoading ? "正在加载..." : "重新加载"}</button><button type="submit" ${connectionDisabled}>${connectingTarget ? "正在连接..." : "连接仓库"}</button></form>${targetMessage ? `<p class="target-message" role="status">${escapeHtml(targetMessage)}</p>` : ""}${targetRows ? `<ul class="target-list">${targetRows}</ul>` : ""}${configurationPanel}</section><div class="scope-workspace"><main class="scope-sidebar"><div class="sidebar-heading"><div><span>来源目录</span><small>${state.sources.length} 个来源</small></div></div>${state.sources.map((source) => renderScopeList(source, scopes)).join("")}</main>${renderEditor(editor, targets)}</div></section>`;
   };
   const repositoryRefreshController = createRepositoryRefreshController(
     () => api.refreshGithubRepositoryPermissions?.() ?? api.listGithubRepositories?.() ?? Promise.resolve([]),
@@ -222,6 +248,30 @@ export function mountSources(
     render();
   });
   root.addEventListener("submit", async (event) => {
+    if (event.target instanceof HTMLFormElement && event.target.id === "target-configuration-form" && configuringTarget && api.saveTargetConfiguration) {
+      event.preventDefault();
+      const data = new FormData(event.target);
+      configurationForm = {
+        adapter: String(data.get("adapter")) as "github_pages" | "astro_content",
+        postsDirectory: String(data.get("posts-directory") ?? ""),
+        resourcesDirectory: String(data.get("resources-directory") ?? ""),
+      };
+      configurationPending = true; initialization = undefined; render();
+      try {
+        const saved = await api.saveTargetConfiguration({ target_id: configuringTarget.id, adapter: configurationForm.adapter, posts_directory: configurationForm.postsDirectory, resources_directory: configurationForm.resourcesDirectory });
+        targets = targets.map((target) => target.id === saved.id ? saved : target);
+        configuringTarget = saved;
+        configurationForm = {
+          adapter: saved.adapter ?? configurationForm.adapter,
+          postsDirectory: saved.layout.posts_directory,
+          resourcesDirectory: saved.layout.resources_directory,
+        };
+        targetMessage = saved.state === "ready" ? "发布规则已保存，仓库可以绑定范围。" : "发布规则已保存。目录尚不存在，请先确认初始化。";
+        if (saved.state !== "ready" && api.previewTargetInitialization) initialization = await api.previewTargetInitialization(saved.id);
+      } catch (error) { targetMessage = errorMessage(error, "发布规则无法保存"); }
+      finally { configurationPending = false; render(); }
+      return;
+    }
     if (event.target instanceof HTMLFormElement && event.target.id === "scope-form") {
       event.preventDefault();
       if (!editor || !api.saveScope) return;
@@ -285,6 +335,26 @@ export function mountSources(
     const action = target.dataset.action;
     if (action === "retry") { void refreshController.refresh(); return; }
     if (action === "refresh-repositories") { void reloadRepositories(); return; }
+    if (action === "close-target-configuration") { configurationRequestController.begin(); configuringTarget = undefined; candidates = []; configurationForm = undefined; initialization = undefined; render(); return; }
+    if (action === "configure-target") {
+      const selected = targets.find((item) => item.id === target.dataset.targetId);
+      if (!selected || !api.inspectTargetConfiguration) return;
+      const requestGeneration = configurationRequestController.begin();
+      configuringTarget = selected; candidates = []; configurationForm = undefined; initialization = undefined; targetMessage = "正在检查仓库布局..."; render();
+      void api.inspectTargetConfiguration(selected.id).then((items) => {
+        if (!configurationRequestController.isCurrent(requestGeneration) || configuringTarget?.id !== selected.id) return;
+        candidates = items;
+        const selectedCandidate = items.find((candidate) => candidate.adapter === selected.adapter) ?? items[0];
+        if (selectedCandidate) configurationForm = { adapter: selectedCandidate.adapter, postsDirectory: selected.adapter ? selected.layout.posts_directory : selectedCandidate.posts_directory, resourcesDirectory: selected.adapter ? selected.layout.resources_directory : selectedCandidate.resources_directory };
+        render();
+      }).catch((error) => { if (!configurationRequestController.isCurrent(requestGeneration) || configuringTarget?.id !== selected.id) return; targetMessage = errorMessage(error, "仓库布局无法检查"); render(); });
+      return;
+    }
+    if (action === "confirm-target-initialization" && configuringTarget && api.initializeTarget) {
+      configurationPending = true; render();
+      void api.initializeTarget(configuringTarget.id).then((saved) => { targets = targets.map((item) => item.id === saved.id ? saved : item); targetMessage = "发布目录已初始化，仓库现在可以绑定范围。"; configuringTarget = undefined; configurationForm = undefined; initialization = undefined; }).catch((error) => { targetMessage = errorMessage(error, "发布目录无法初始化"); }).finally(() => { configurationPending = false; render(); });
+      return;
+    }
     const source = state.status === "ready" ? state.sources.find((item) => item.id === target.dataset.sourceId) : undefined;
     if (action === "new-scope" && source) { editor = editorFor(source); render(); void loadChildren(editor, ".", api, render); return; }
     if (action === "edit-scope" && source) { const summary = scopes.find((item) => item.scope.id === target.dataset.scopeId); if (summary) { editor = editorFor(source, summary.scope); render(); void loadChildren(editor, ".", api, render); } return; }
@@ -318,6 +388,15 @@ export function mountSources(
   root.addEventListener("change", (event) => {
     const input = event.target as HTMLInputElement;
     if (input instanceof HTMLSelectElement && input.name === "repository") { selectedRepository = input.value; render(); return; }
+    if (input instanceof HTMLSelectElement && input.name === "adapter") {
+      const candidate = candidates.find((item) => item.adapter === input.value);
+      if (candidate) {
+        configurationForm = { adapter: candidate.adapter, postsDirectory: candidate.posts_directory, resourcesDirectory: candidate.resources_directory };
+        initialization = undefined;
+        render();
+      }
+      return;
+    }
     if (!editor || !(input instanceof HTMLInputElement)) return;
     const action = input.dataset.action;
     const path = input.dataset.path;
@@ -326,6 +405,12 @@ export function mountSources(
     if (action === "toggle-recursive" && path) { const selection = editor.selections.find((item) => item.node.value === path); if (selection) selection.recursive = input.checked; render(); return; }
     const rules = input.dataset.ruleKind === "include" ? editor.includePatterns : input.dataset.ruleKind === "exclude" ? editor.excludePatterns : undefined;
     if (rules && input.dataset.ruleIndex !== undefined) rules[Number(input.dataset.ruleIndex)] = input.value;
+  });
+  root.addEventListener("input", (event) => {
+    const input = event.target;
+    if (!(input instanceof HTMLInputElement) || !configurationForm) return;
+    if (input.name === "posts-directory") configurationForm.postsDirectory = input.value;
+    if (input.name === "resources-directory") configurationForm.resourcesDirectory = input.value;
   });
   render();
   void refreshController.refresh().then(async () => { [scopes, targets] = await Promise.all([api.listScopes?.() ?? Promise.resolve([]), api.listTargets?.() ?? Promise.resolve([])]); render(); await reloadRepositories(); });

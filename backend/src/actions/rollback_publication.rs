@@ -3,12 +3,16 @@ use chrono::{SecondsFormat, Utc};
 use crate::{
     providers::git::{GitCommandError, GitCommands},
     shared::errors::{AppError, AppResult},
-    storage::publications::{PublicationRepository, PublicationState},
+    storage::{
+        changes::ChangeRepository,
+        publications::{PublicationRepository, PublicationState},
+    },
     targets::Target,
     workspace::Checkout,
 };
 
 pub fn execute(
+    changes: &ChangeRepository,
     publications: &PublicationRepository,
     batch_id: &str,
     target: &Target,
@@ -32,6 +36,21 @@ pub fn execute(
         return Err(AppError::new(
             "publication_not_reversible",
             "Only a published release can be rolled back",
+        ));
+    }
+    if !publications
+        .is_latest_reversible(&record)
+        .map_err(|_| AppError::new("storage_error", "Release history could not be loaded"))?
+    {
+        return Err(AppError::new(
+            "publication_not_latest",
+            "Only the latest published release for this scope can be rolled back",
+        ));
+    }
+    if record.snapshots_before_publish.is_none() {
+        return Err(AppError::new(
+            "publication_legacy_rollback_unsupported",
+            "This legacy publication cannot be rolled back safely",
         ));
     }
     let checkout =
@@ -85,6 +104,17 @@ pub fn execute(
         rollback_sha
     };
     crate::releases::push::execute(checkout.root())?;
+    // Restore the last published baseline so the local source is detected as pending
+    // again on the next scan. Legacy records have no saved baseline, so reset it.
+    changes
+        .restore_rollback(
+            &record.scope_id,
+            record
+                .snapshots_before_publish
+                .as_deref()
+                .expect("validated above"),
+        )
+        .map_err(|_| AppError::new("storage_error", "Rollback state could not be saved"))?;
     publications
         .mark_rolled_back(
             batch_id,
@@ -153,7 +183,7 @@ mod tests {
         },
     };
 
-    use super::reconcile_timed_out_revert;
+    use super::{execute, reconcile_timed_out_revert};
 
     fn git(root: &Path, arguments: &[&str]) {
         let output = Command::new("git")
@@ -243,6 +273,7 @@ mod tests {
                 target_id: "target".into(),
                 commit_sha: published_sha.clone(),
                 change_ids: vec![],
+                snapshots_before_publish: None,
                 state: PublicationState::PendingPush,
                 published_at: None,
                 rollback_commit_sha: None,
@@ -270,6 +301,100 @@ mod tests {
             Some(rollback_sha.as_str())
         );
 
+        drop(publications);
+        drop(scopes);
+        drop(sources);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn rejects_a_legacy_publication_before_creating_a_revert() {
+        let root =
+            std::env::temp_dir().join(format!("easyblog-rollback-legacy-{}", uuid::Uuid::new_v4()));
+        let workspace = root.join("workspace");
+        fs::create_dir_all(workspace.join("_posts")).unwrap();
+        git(&workspace, &["init"]);
+        fs::write(workspace.join("_posts/post.md"), "published\n").unwrap();
+        git(&workspace, &["add", "."]);
+        git(
+            &workspace,
+            &[
+                "-c",
+                "user.name=easyBlog test",
+                "-c",
+                "user.email=test@example.com",
+                "commit",
+                "-m",
+                "Published",
+            ],
+        );
+        let published_sha = crate::providers::git::GitCommands::commit_sha(&workspace).unwrap();
+        let database = root.join("easyblog.sqlite");
+        let sources = SourceRepository::open(&database).unwrap();
+        let scopes = ScopeRepository::open(&database).unwrap();
+        let publications = PublicationRepository::open(&database).unwrap();
+        sources
+            .insert(&Source {
+                id: "source".into(),
+                path: root.to_string_lossy().into_owned(),
+                name: "Content".into(),
+                r#type: "local_directory".into(),
+                created_at: "now".into(),
+            })
+            .unwrap();
+        scopes
+            .save(
+                &Scope {
+                    id: "scope".into(),
+                    source_id: "source".into(),
+                    target_id: Some("target".into()),
+                    name: "Posts".into(),
+                    lifecycle: ScopeLifecycle::Active,
+                    revision: 1,
+                    selections: vec![],
+                    include_patterns: vec![],
+                    exclude_patterns: vec![],
+                    created_at: "now".into(),
+                    updated_at: "now".into(),
+                },
+                None,
+            )
+            .unwrap();
+        publications
+            .insert_pending(&PublicationRecord {
+                batch_id: "legacy".into(),
+                scope_id: "scope".into(),
+                target_id: "target".into(),
+                commit_sha: published_sha.clone(),
+                change_ids: vec![],
+                snapshots_before_publish: None,
+                state: PublicationState::PendingPush,
+                published_at: None,
+                rollback_commit_sha: None,
+                rolled_back_at: None,
+            })
+            .unwrap();
+        publications.mark_published("legacy", "now").unwrap();
+        let changes = crate::storage::changes::ChangeRepository::open(&database).unwrap();
+        let target = crate::targets::Target {
+            id: "target".into(),
+            workspace_path: workspace.clone(),
+            repository: String::new(),
+            default_branch: String::new(),
+            visibility: crate::targets::TargetVisibility::Public,
+            state: crate::targets::TargetState::Ready,
+            adapter: Some(crate::targets::PublishingAdapter::GithubPages),
+            layout: crate::targets::PagesLayout::default(),
+        };
+
+        let error = execute(&changes, &publications, "legacy", &target).unwrap_err();
+        assert_eq!(error.code, "publication_legacy_rollback_unsupported");
+        assert_eq!(
+            crate::providers::git::GitCommands::commit_sha(&workspace).unwrap(),
+            published_sha
+        );
+
+        drop(changes);
         drop(publications);
         drop(scopes);
         drop(sources);

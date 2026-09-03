@@ -4,7 +4,7 @@ use crate::{
     providers::github::repository::{self, GithubRepository, GithubRepositoryError},
     shared::errors::{AppError, AppResult},
     storage::targets::ConnectedTarget,
-    targets::TargetVisibility,
+    targets::{PublishingAdapter, TargetVisibility},
 };
 use tauri::State;
 
@@ -76,6 +76,65 @@ pub async fn refresh_github_repository_permissions() -> AppResult<Vec<GithubRepo
 #[tauri::command]
 pub fn list_targets(state: State<'_, AppState>) -> AppResult<Vec<ConnectedTarget>> {
     actions::list_targets::execute(&state.targets)
+}
+
+#[tauri::command]
+pub fn inspect_target_configuration(
+    state: State<'_, AppState>,
+    target_id: String,
+) -> AppResult<Vec<actions::configure_target::LayoutCandidate>> {
+    actions::configure_target::inspect(&state.targets, &target_id)
+}
+
+#[tauri::command]
+pub fn save_target_configuration(
+    state: State<'_, AppState>,
+    target_id: String,
+    adapter: String,
+    posts_directory: String,
+    resources_directory: String,
+) -> AppResult<ConnectedTarget> {
+    actions::configure_target::save(
+        &state.targets,
+        actions::configure_target::ConfigureTargetInput {
+            target_id,
+            adapter: match adapter.as_str() {
+                "github_pages" => PublishingAdapter::GithubPages,
+                "astro_content" => PublishingAdapter::AstroContent,
+                _ => {
+                    return Err(AppError::new(
+                        "unsupported_adapter",
+                        "Choose a supported publishing adapter",
+                    ))
+                }
+            },
+            posts_directory,
+            resources_directory,
+        },
+    )
+}
+
+#[tauri::command]
+pub fn preview_target_initialization(
+    state: State<'_, AppState>,
+    target_id: String,
+) -> AppResult<actions::configure_target::InitializationPreview> {
+    actions::configure_target::preview_initialization(&state.targets, &target_id)
+}
+
+#[tauri::command]
+pub fn initialize_target(
+    state: State<'_, AppState>,
+    target_id: String,
+    confirmed: bool,
+) -> AppResult<ConnectedTarget> {
+    if !confirmed {
+        return Err(AppError::new(
+            "initialization_not_confirmed",
+            "Confirm the initialization preview before writing publishing files",
+        ));
+    }
+    actions::configure_target::initialize(&state.targets, &target_id)
 }
 
 fn repository_error(error: GithubRepositoryError) -> AppError {

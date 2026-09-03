@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const { invoke } = vi.hoisted(() => ({ invoke: vi.fn() }));
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
 
-import { connectTarget, githubAuthorizationStatus, listGithubRepositories, listTargets, refreshGithubRepositoryPermissions, startGithubLogin } from "./targets";
+import { connectTarget, githubAuthorizationStatus, initializeTarget, inspectTargetConfiguration, listGithubRepositories, listTargets, previewTargetInitialization, refreshGithubRepositoryPermissions, saveTargetConfiguration, startGithubLogin } from "./targets";
 
 describe("targets bridge", () => {
   beforeEach(() => invoke.mockReset());
@@ -34,5 +34,17 @@ describe("targets bridge", () => {
     await startGithubLogin();
     expect(invoke).toHaveBeenNthCalledWith(1, "github_authorization_status");
     expect(invoke).toHaveBeenNthCalledWith(2, "start_github_login");
+  });
+
+  it("inspects, saves, previews, and confirms target configuration through Tauri", async () => {
+    invoke.mockResolvedValue({});
+    await inspectTargetConfiguration("target-1");
+    await saveTargetConfiguration({ target_id: "target-1", adapter: "astro_content", posts_directory: "src/content/posts", resources_directory: "src/assets/easyblog" });
+    await previewTargetInitialization("target-1");
+    await initializeTarget("target-1");
+    expect(invoke).toHaveBeenNthCalledWith(1, "inspect_target_configuration", { targetId: "target-1" });
+    expect(invoke).toHaveBeenNthCalledWith(2, "save_target_configuration", { targetId: "target-1", adapter: "astro_content", postsDirectory: "src/content/posts", resourcesDirectory: "src/assets/easyblog" });
+    expect(invoke).toHaveBeenNthCalledWith(3, "preview_target_initialization", { targetId: "target-1" });
+    expect(invoke).toHaveBeenNthCalledWith(4, "initialize_target", { targetId: "target-1", confirmed: true });
   });
 });

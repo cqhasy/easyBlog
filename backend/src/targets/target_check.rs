@@ -44,7 +44,7 @@ pub fn check(target: &Target) -> TargetCheck {
         return TargetCheck::Unsupported { reason: error };
     }
     TargetCheck::Ready {
-        needs_configuration: !root.join(".github/easyblog.yml").is_file(),
+        needs_configuration: false,
     }
 }
 
@@ -129,18 +129,10 @@ mod tests {
         assert_eq!(
             check(&target(&root)),
             TargetCheck::Ready {
-                needs_configuration: true
-            }
-        );
-
-        fs::create_dir_all(root.join(".github")).unwrap();
-        fs::write(root.join(".github/easyblog.yml"), "adapter: github_pages\n").unwrap();
-        assert_eq!(
-            check(&target(&root)),
-            TargetCheck::Ready {
                 needs_configuration: false
             }
         );
+
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -201,7 +193,7 @@ mod tests {
         assert_eq!(
             check(&target(&worktree)),
             TargetCheck::Ready {
-                needs_configuration: true
+                needs_configuration: false
             }
         );
 

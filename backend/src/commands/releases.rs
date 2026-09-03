@@ -20,6 +20,7 @@ pub async fn preview_release(
     let sources = state.sources.clone();
     let scopes = state.scopes.clone();
     let changes = state.changes.clone();
+    let ledger = state.ledger.clone();
     let targets = state.targets.clone();
     tauri::async_runtime::spawn_blocking(move || {
         actions::github_auth::require_ready()?;
@@ -28,6 +29,7 @@ pub async fn preview_release(
             &sources,
             &scopes,
             &changes,
+            &ledger,
             actions::preview_release::PreviewReleaseInput {
                 scope_id: input.scope_id,
                 target,
@@ -46,8 +48,7 @@ pub async fn preview_release(
 
 #[derive(Debug, Deserialize)]
 pub struct PublishReleaseCommandInput {
-    pub scope_id: String,
-    pub change_ids: Vec<String>,
+    pub batch_id: String,
 }
 
 #[tauri::command]
@@ -58,20 +59,33 @@ pub async fn publish_release(
     let sources = state.sources.clone();
     let scopes = state.scopes.clone();
     let changes = state.changes.clone();
+    let ledger = state.ledger.clone();
     let publications = state.publications.clone();
     let targets = state.targets.clone();
     tauri::async_runtime::spawn_blocking(move || {
         actions::github_auth::require_ready()?;
-        let target = target_for_scope(&scopes, &targets, &input.scope_id)?;
+        let batch = ledger
+            .load_batch(&input.batch_id)
+            .map_err(|_| AppError::new("storage_error", "Release batch could not be loaded"))?
+            .ok_or_else(|| {
+                AppError::new("release_not_found", "Release preview no longer exists")
+            })?;
+        let target = targets
+            .get(&batch.target_id)
+            .map_err(|_| AppError::new("storage_error", "Publishing target could not be loaded"))?
+            .map(|connected| connected.target)
+            .ok_or_else(|| {
+                AppError::new("target_not_found", "The publishing target no longer exists")
+            })?;
         actions::publish_release::execute(
             &sources,
             &scopes,
             &changes,
+            &ledger,
             &publications,
+            target,
             actions::publish_release::PublishReleaseInput {
-                scope_id: input.scope_id,
-                target,
-                change_ids: input.change_ids,
+                batch_id: input.batch_id,
             },
         )
     })

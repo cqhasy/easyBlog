@@ -3,6 +3,8 @@ use std::{path::Path, sync::Mutex};
 use rusqlite::{params, types::Type, Connection, Error, OptionalExtension, Result};
 use serde::Serialize;
 
+use crate::tracking::snapshot::Snapshot;
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct PublicationRecord {
     pub batch_id: String,
@@ -10,6 +12,8 @@ pub struct PublicationRecord {
     pub target_id: String,
     pub commit_sha: String,
     pub change_ids: Vec<String>,
+    #[serde(skip)]
+    pub snapshots_before_publish: Option<Vec<Snapshot>>,
     pub state: PublicationState,
     pub published_at: Option<String>,
     pub rollback_commit_sha: Option<String>,
@@ -40,8 +44,8 @@ impl PublicationRepository {
 
     pub fn insert_pending(&self, record: &PublicationRecord) -> Result<()> {
         self.connection.lock().expect("publication repository lock poisoned").execute(
-            "INSERT INTO publications (batch_id, scope_id, target_id, commit_sha, change_ids, state, published_at, rollback_commit_sha, rolled_back_at) VALUES (?1, ?2, ?3, ?4, ?5, 'pending_push', NULL, NULL, NULL)",
-            params![record.batch_id, record.scope_id, record.target_id, record.commit_sha, serde_json::to_string(&record.change_ids).unwrap()],
+            "INSERT INTO publications (batch_id, scope_id, target_id, commit_sha, change_ids, snapshots_before_publish, state, published_at, rollback_commit_sha, rolled_back_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'pending_push', NULL, NULL, NULL)",
+            params![record.batch_id, record.scope_id, record.target_id, record.commit_sha, serde_json::to_string(&record.change_ids).unwrap(), record.snapshots_before_publish.as_ref().map(|snapshots| serde_json::to_string(snapshots).unwrap())],
         )?;
         Ok(())
     }
@@ -51,7 +55,7 @@ impl PublicationRepository {
             .connection
             .lock()
             .expect("publication repository lock poisoned");
-        connection.query_row("SELECT batch_id, scope_id, target_id, commit_sha, change_ids, state, published_at, rollback_commit_sha, rolled_back_at FROM publications WHERE batch_id = ?1", [batch_id], row).optional()
+        connection.query_row("SELECT batch_id, scope_id, target_id, commit_sha, change_ids, snapshots_before_publish, state, published_at, rollback_commit_sha, rolled_back_at FROM publications WHERE batch_id = ?1", [batch_id], row).optional()
     }
 
     pub fn list(&self) -> Result<Vec<PublicationRecord>> {
@@ -59,7 +63,7 @@ impl PublicationRepository {
             .connection
             .lock()
             .expect("publication repository lock poisoned");
-        let mut statement = connection.prepare("SELECT batch_id, scope_id, target_id, commit_sha, change_ids, state, published_at, rollback_commit_sha, rolled_back_at FROM publications ORDER BY COALESCE(published_at, '') DESC, batch_id DESC")?;
+        let mut statement = connection.prepare("SELECT batch_id, scope_id, target_id, commit_sha, change_ids, snapshots_before_publish, state, published_at, rollback_commit_sha, rolled_back_at FROM publications ORDER BY COALESCE(published_at, '') DESC, batch_id DESC")?;
         let records = statement
             .query_map([], row)?
             .collect::<Result<Vec<PublicationRecord>>>()?;
@@ -85,19 +89,40 @@ impl PublicationRepository {
         self.connection.lock().expect("publication repository lock poisoned").execute("UPDATE publications SET state = 'rollback_pending', rollback_commit_sha = ?2 WHERE batch_id = ?1 AND state = 'published'", params![batch_id, commit_sha])?;
         Ok(())
     }
+
+    pub fn is_latest_reversible(&self, record: &PublicationRecord) -> Result<bool> {
+        let connection = self
+            .connection
+            .lock()
+            .expect("publication repository lock poisoned");
+        let latest = connection
+            .query_row(
+                "SELECT batch_id FROM publications WHERE scope_id = ?1 AND state IN ('published', 'rollback_pending') ORDER BY COALESCE(published_at, '') DESC, batch_id DESC LIMIT 1",
+                params![record.scope_id],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?;
+        Ok(latest.as_deref() == Some(&record.batch_id))
+    }
 }
 
 fn row(row: &rusqlite::Row<'_>) -> Result<PublicationRecord> {
-    let state: String = row.get(5)?;
+    let state: String = row.get(6)?;
     let change_ids: String = row.get(4)?;
     let change_ids = serde_json::from_str(&change_ids)
         .map_err(|error| Error::FromSqlConversionFailure(4, Type::Text, Box::new(error)))?;
+    let snapshots_before_publish = row
+        .get::<_, Option<String>>(5)?
+        .map(|snapshots| serde_json::from_str(&snapshots))
+        .transpose()
+        .map_err(|error| Error::FromSqlConversionFailure(5, Type::Text, Box::new(error)))?;
     Ok(PublicationRecord {
         batch_id: row.get(0)?,
         scope_id: row.get(1)?,
         target_id: row.get(2)?,
         commit_sha: row.get(3)?,
         change_ids,
+        snapshots_before_publish,
         state: match state.as_str() {
             "pending_push" => PublicationState::PendingPush,
             "published" => PublicationState::Published,
@@ -105,15 +130,15 @@ fn row(row: &rusqlite::Row<'_>) -> Result<PublicationRecord> {
             "rolled_back" => PublicationState::RolledBack,
             _ => {
                 return Err(Error::FromSqlConversionFailure(
-                    5,
+                    6,
                     Type::Text,
                     format!("Unknown publication state: {state}").into(),
                 ));
             }
         },
-        published_at: row.get(6)?,
-        rollback_commit_sha: row.get(7)?,
-        rolled_back_at: row.get(8)?,
+        published_at: row.get(7)?,
+        rollback_commit_sha: row.get(8)?,
+        rolled_back_at: row.get(9)?,
     })
 }
 
@@ -176,6 +201,26 @@ mod tests {
 
         assert!(repository.get("batch").is_err());
 
+        drop(repository);
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn only_the_latest_reversible_publication_for_a_scope_can_be_rolled_back() {
+        let path = temp_db();
+        let repository = PublicationRepository::open(&path).unwrap();
+        insert_raw(&path, "published", "[]");
+        let connection = Connection::open(&path).unwrap();
+        connection
+            .execute(
+                "INSERT INTO publications (batch_id, scope_id, target_id, commit_sha, change_ids, state, published_at) VALUES ('newer', 'scope', 'other-target', 'sha-2', '[]', 'published', 'later')",
+                [],
+            )
+            .unwrap();
+        drop(connection);
+
+        let older = repository.get("batch").unwrap().unwrap();
+        assert!(!repository.is_latest_reversible(&older).unwrap());
         drop(repository);
         std::fs::remove_file(path).unwrap();
     }

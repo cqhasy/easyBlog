@@ -4,6 +4,7 @@ import {
   addSourceAndReload,
   createRepositoryRefreshController,
   createSourcesRefreshController,
+  createTargetConfigurationRequestController,
   formatSourcePath,
   loadSources,
   notifyScopesChanged,
@@ -138,5 +139,14 @@ describe("sources feature", () => {
 
     expect(controller.isLoading()).toBe(false);
     expect(apply).toHaveBeenCalledWith([{ repository: "owner/blog", default_branch: "main", visibility: "public" }]);
+  });
+
+  it("invalidates an inspection when the configuration target changes", () => {
+    const controller = createTargetConfigurationRequestController();
+    const first = controller.begin();
+    const second = controller.begin();
+
+    expect(controller.isCurrent(first)).toBe(false);
+    expect(controller.isCurrent(second)).toBe(true);
   });
 });

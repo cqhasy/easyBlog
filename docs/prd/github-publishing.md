@@ -14,4 +14,6 @@ easyBlog 不实现自己的 GitHub 账号体系，也不收集或保存 Personal
 
 连接仓库不等同于识别博客结构。连接完成后目标处于“待配置发布规则”状态，不能绑定范围、预览或发布；easyBlog 不根据目录名猜测适配器，也不创建 `_posts`、资源目录、`.gitkeep` 或配置文件。发布目标配置是独立的后续流程：作者确认博客适配器、文章目录、资源目录和必要的生成规则后，easyBlog 才能验证布局并允许绑定范围。
 
-首版现有的 GitHub Pages 模板适配器会生成 Front Matter、slug、文章目录和资源目录，但它不是所有已连接仓库的默认事实。未来若某个经确认的适配器需要初始化目录或 `.github/easyblog.yml`，初始化必须在该适配器配置流程中明确展示并由作者确认；不创建 GitHub Actions。
+首版支持 GitHub Pages 与 Astro content collections 两种发布适配器。GitHub Pages 会生成 Front Matter、slug、文章目录和资源目录，并在初始化时写入系统维护的 `.github/easyblog.yml`；Astro 使用 `src/content/posts` 和 `src/assets/easyblog` 作为建议目录，不写入适配器配置文件。适配器建议只用于解释仓库中已发现的布局，作者必须明确选择适配器和目录；保存配置只持久化元数据，绝不写入工作区。
+
+若所选布局缺少目录或适配器配置，easyBlog 会先展示精确的待创建项。作者确认后，应用仅在干净的托管工作区中创建缺失目录和适配器自有配置；不创建 GitHub Actions，也不会在预览或发布过程中隐式初始化。

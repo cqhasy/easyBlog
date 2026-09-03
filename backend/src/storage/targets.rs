@@ -3,7 +3,7 @@ use std::{path::Path, sync::Mutex};
 use rusqlite::{params, Connection, OptionalExtension, Result};
 use serde::Serialize;
 
-use crate::targets::{PagesLayout, Target, TargetState, TargetVisibility};
+use crate::targets::{PagesLayout, PublishingAdapter, Target, TargetState, TargetVisibility};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ConnectedTarget {
@@ -28,8 +28,8 @@ impl TargetRepository {
 
     pub fn insert(&self, target: &ConnectedTarget) -> Result<()> {
         self.connection.lock().expect("target repository lock poisoned").execute(
-            "INSERT INTO targets (id, workspace_path, name, posts_directory, resources_directory, created_at, repository, default_branch, visibility, target_state) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
-            params![target.target.id, target.target.workspace_path.to_string_lossy(), target.name, target.target.layout.posts_directory.to_string_lossy(), target.target.layout.resources_directory.to_string_lossy(), target.created_at, target.target.repository, target.target.default_branch, visibility_name(&target.target.visibility), state_name(&target.target.state)],
+            "INSERT INTO targets (id, workspace_path, name, posts_directory, resources_directory, created_at, repository, default_branch, visibility, target_state, adapter) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+            params![target.target.id, target.target.workspace_path.to_string_lossy(), target.name, target.target.layout.posts_directory.to_string_lossy(), target.target.layout.resources_directory.to_string_lossy(), target.created_at, target.target.repository, target.target.default_branch, visibility_name(&target.target.visibility), state_name(&target.target.state), adapter_name(target.target.adapter.as_ref())],
         )?;
         Ok(())
     }
@@ -39,7 +39,7 @@ impl TargetRepository {
             .connection
             .lock()
             .expect("target repository lock poisoned");
-        let mut statement = connection.prepare("SELECT id, workspace_path, name, posts_directory, resources_directory, created_at, repository, default_branch, visibility, target_state FROM targets ORDER BY created_at, id")?;
+        let mut statement = connection.prepare("SELECT id, workspace_path, name, posts_directory, resources_directory, created_at, repository, default_branch, visibility, target_state, adapter FROM targets ORDER BY created_at, id")?;
         let targets = statement.query_map([], row)?.collect();
         targets
     }
@@ -49,7 +49,7 @@ impl TargetRepository {
             .connection
             .lock()
             .expect("target repository lock poisoned");
-        connection.query_row("SELECT id, workspace_path, name, posts_directory, resources_directory, created_at, repository, default_branch, visibility, target_state FROM targets WHERE id = ?1", [id], row).optional()
+        connection.query_row("SELECT id, workspace_path, name, posts_directory, resources_directory, created_at, repository, default_branch, visibility, target_state, adapter FROM targets WHERE id = ?1", [id], row).optional()
     }
 
     pub fn find_by_repository(
@@ -61,7 +61,7 @@ impl TargetRepository {
             .connection
             .lock()
             .expect("target repository lock poisoned");
-        connection.query_row("SELECT id, workspace_path, name, posts_directory, resources_directory, created_at, repository, default_branch, visibility, target_state FROM targets WHERE repository = ?1 COLLATE NOCASE AND default_branch = ?2", params![repository, default_branch], row).optional()
+        connection.query_row("SELECT id, workspace_path, name, posts_directory, resources_directory, created_at, repository, default_branch, visibility, target_state, adapter FROM targets WHERE repository = ?1 COLLATE NOCASE AND default_branch = ?2", params![repository, default_branch], row).optional()
     }
 
     pub fn update(&self, target: &ConnectedTarget) -> Result<()> {
@@ -69,8 +69,8 @@ impl TargetRepository {
             .lock()
             .expect("target repository lock poisoned")
             .execute(
-                "UPDATE targets SET target_state = ?2 WHERE id = ?1",
-                params![target.target.id, state_name(&target.target.state)],
+                "UPDATE targets SET posts_directory = ?2, resources_directory = ?3, target_state = ?4, adapter = ?5 WHERE id = ?1",
+                params![target.target.id, target.target.layout.posts_directory.to_string_lossy(), target.target.layout.resources_directory.to_string_lossy(), state_name(&target.target.state), adapter_name(target.target.adapter.as_ref())],
             )?;
         Ok(())
     }
@@ -98,10 +98,22 @@ fn row(row: &rusqlite::Row<'_>) -> Result<ConnectedTarget> {
                 "needs_recovery" => TargetState::NeedsRecovery,
                 _ => TargetState::NeedsReconnect,
             },
+            adapter: match row.get::<_, Option<String>>(10)?.as_deref() {
+                Some("github_pages") => Some(PublishingAdapter::GithubPages),
+                Some("astro_content") => Some(PublishingAdapter::AstroContent),
+                _ => None,
+            },
         },
         name: row.get(2)?,
         created_at: row.get(5)?,
     })
+}
+fn adapter_name(value: Option<&PublishingAdapter>) -> Option<&'static str> {
+    match value {
+        Some(PublishingAdapter::GithubPages) => Some("github_pages"),
+        Some(PublishingAdapter::AstroContent) => Some("astro_content"),
+        None => None,
+    }
 }
 
 fn visibility_name(value: &TargetVisibility) -> &'static str {

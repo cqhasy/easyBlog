@@ -148,6 +148,20 @@ impl ChangeRepository {
         }
         transaction.commit()
     }
+
+    pub fn restore_rollback(&self, scope_id: &str, snapshots: &[Snapshot]) -> Result<()> {
+        let mut connection = self
+            .connection
+            .lock()
+            .expect("change repository lock poisoned");
+        let transaction = connection.transaction()?;
+        transaction.execute("DELETE FROM snapshots WHERE scope_id = ?1", [scope_id])?;
+        for snapshot in snapshots {
+            transaction.execute("INSERT INTO snapshots (scope_id, source_identity, source_path, title, fingerprint, observed_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)", params![snapshot.scope_id, snapshot.source_identity, snapshot.source_path, snapshot.title, snapshot.fingerprint, snapshot.observed_at])?;
+        }
+        transaction.execute("DELETE FROM changes WHERE scope_id = ?1", [scope_id])?;
+        transaction.commit()
+    }
 }
 
 fn replace_changes(
