@@ -241,6 +241,18 @@ fn migrate_release_ledger(connection: &Connection) -> Result<()> {
     }
     let mut statement = connection.prepare("PRAGMA table_info(release_source_transitions)")?;
     let transition_columns = statement
+        .query_map([], |row| {
+            Ok((row.get::<_, String>(1)?, row.get::<_, i64>(3)? != 0))
+        })?
+        .collect::<Result<Vec<_>>>()?;
+    if transition_columns
+        .iter()
+        .any(|(name, not_null)| name == "source_path" && *not_null)
+    {
+        migrate_legacy_source_transitions(connection)?;
+    }
+    let mut statement = connection.prepare("PRAGMA table_info(release_source_transitions)")?;
+    let transition_columns = statement
         .query_map([], |row| row.get::<_, String>(1))?
         .collect::<Result<Vec<_>>>()?;
     for (name, definition) in [
@@ -259,4 +271,27 @@ fn migrate_release_ledger(connection: &Connection) -> Result<()> {
         }
     }
     Ok(())
+}
+
+fn migrate_legacy_source_transitions(connection: &Connection) -> Result<()> {
+    connection.execute_batch(
+        "ALTER TABLE release_source_transitions RENAME TO legacy_release_source_transitions;
+         CREATE TABLE release_source_transitions (
+           batch_id TEXT NOT NULL REFERENCES release_batches(batch_id) ON DELETE CASCADE,
+           source_identity TEXT NOT NULL,
+           before_source_path TEXT,
+           before_title TEXT,
+           before_fingerprint TEXT,
+           before_observed_at TEXT,
+           after_source_path TEXT,
+           after_title TEXT,
+           after_fingerprint TEXT,
+           after_observed_at TEXT,
+           PRIMARY KEY (batch_id, source_identity)
+         );
+         INSERT INTO release_source_transitions (batch_id, source_identity, before_source_path, before_fingerprint, after_source_path, after_fingerprint)
+         SELECT batch_id, source_identity, source_path, before_fingerprint, source_path, after_fingerprint
+         FROM legacy_release_source_transitions;
+         DROP TABLE legacy_release_source_transitions;",
+    )
 }

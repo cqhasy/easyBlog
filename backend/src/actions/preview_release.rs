@@ -96,6 +96,42 @@ pub fn execute(
                 AppError::new("storage_error", "Target release state could not be updated")
             })?
     };
+    if let Some(active) = ledger
+        .active_preview(&input.target.id)
+        .map_err(|_| AppError::new("storage_error", "Target release state could not be loaded"))?
+    {
+        if active.scope_id == scope.id
+            && active.change_ids == batch.change_ids
+            && active.scope_revision == scope.revision
+            && active.target_sequence_before == target_sequence_before
+            && active.target_head_before == head
+        {
+            let operations = ledger.load_operations(&active.id).map_err(|_| {
+                AppError::new("storage_error", "Release preview could not be validated")
+            })?;
+            if !operations.is_empty()
+                && append_frozen_deletes(&mut files, &operations).is_ok()
+                && validate_frozen_operations(checkout.root(), &files, &operations).is_ok()
+            {
+                return ReleasePlan::new(
+                    active.id.clone(),
+                    ReleaseBatch {
+                        id: active.id,
+                        scope_id: active.scope_id,
+                        target_id: active.target_id,
+                        change_ids: active.change_ids,
+                    },
+                    false,
+                    &files,
+                    checkout.root(),
+                );
+            }
+        }
+        return Err(AppError::new(
+            "release_preview_conflict",
+            "An existing release preview must be confirmed before creating another one",
+        ));
+    }
     let (bindings, revisions, operations, binding_transitions) = preview_ledger_records(
         ledger,
         &source.path,
@@ -780,6 +816,114 @@ mod tests {
         drop(changes);
         drop(ledger);
         drop(targets);
+        drop(scopes);
+        drop(sources);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn resumes_an_unchanged_active_preview() {
+        let root = std::env::temp_dir().join(format!("easyblog-preview-{}", uuid::Uuid::new_v4()));
+        let source_root = root.join("source");
+        let target_root = root.join("target");
+        fs::create_dir_all(&source_root).unwrap();
+        fs::create_dir_all(target_root.join("_posts")).unwrap();
+        fs::create_dir_all(target_root.join("assets/easyblog")).unwrap();
+        fs::write(source_root.join("hello.md"), "# Hello\n").unwrap();
+        git(&target_root, &["init"]);
+        fs::write(target_root.join(".gitkeep"), "").unwrap();
+        git(&target_root, &["add", "."]);
+        git(
+            &target_root,
+            &[
+                "-c",
+                "user.name=easyBlog test",
+                "-c",
+                "user.email=test@example.com",
+                "commit",
+                "-m",
+                "Initial",
+            ],
+        );
+
+        let database = root.join("easyblog.sqlite");
+        let sources = SourceRepository::open(&database).unwrap();
+        let scopes = ScopeRepository::open(&database).unwrap();
+        let changes = ChangeRepository::open(&database).unwrap();
+        let ledger = crate::storage::ledger::LedgerRepository::open(&database).unwrap();
+        let targets = TargetRepository::open(&database).unwrap();
+        let target = Target {
+            state: TargetState::Ready,
+            adapter: Some(crate::targets::PublishingAdapter::GithubPages),
+            ..Target::new("target", &target_root)
+        };
+        targets
+            .insert(&ConnectedTarget {
+                target: target.clone(),
+                name: "Target".into(),
+                created_at: "now".into(),
+            })
+            .unwrap();
+        sources
+            .insert(&Source {
+                id: "source".into(),
+                path: source_root.to_string_lossy().into_owned(),
+                name: "Content".into(),
+                r#type: "local_directory".into(),
+                created_at: "now".into(),
+            })
+            .unwrap();
+        scopes
+            .save(
+                &Scope {
+                    id: "scope".into(),
+                    source_id: "source".into(),
+                    target_id: Some("target".into()),
+                    name: "Posts".into(),
+                    lifecycle: ScopeLifecycle::Active,
+                    revision: 1,
+                    selections: vec![],
+                    include_patterns: vec![],
+                    exclude_patterns: vec![],
+                    created_at: "now".into(),
+                    updated_at: "now".into(),
+                },
+                None,
+            )
+            .unwrap();
+        changes
+            .replace(
+                "scope",
+                "now",
+                &[Change {
+                    id: "change".into(),
+                    scope_id: "scope".into(),
+                    kind: ChangeKind::Added,
+                    source_identity: "hello.md".into(),
+                    source_path: "hello.md".into(),
+                    previous_path: None,
+                    title: Some("Hello".into()),
+                    selected: true,
+                    blocked_reason: None,
+                    snapshot: None,
+                }],
+            )
+            .unwrap();
+
+        let input = || PreviewReleaseInput {
+            scope_id: "scope".into(),
+            target: target.clone(),
+            change_ids: vec!["change".into()],
+        };
+        let first = execute(&sources, &scopes, &changes, &ledger, input()).unwrap();
+        let second = execute(&sources, &scopes, &changes, &ledger, input()).unwrap();
+
+        assert_eq!(second.batch.id, first.batch.id);
+        assert_eq!(second.diffs, first.diffs);
+
+        drop(targets);
+        drop(ledger);
+        drop(changes);
         drop(scopes);
         drop(sources);
         fs::remove_dir_all(root).unwrap();
