@@ -52,15 +52,27 @@ impl ReleaseOperation {
         target_path: impl Into<PathBuf>,
         before_hash: Option<ContentHash>,
         before_blob_sha: Option<String>,
-    ) -> Self {
-        Self {
+    ) -> AppResult<Self> {
+        let before_hash = before_hash.ok_or_else(|| {
+            AppError::new(
+                "release_delete_before_hash_missing",
+                "A delete operation requires the recorded pre-publication content hash",
+            )
+        })?;
+        let before_blob_sha = before_blob_sha.ok_or_else(|| {
+            AppError::new(
+                "release_delete_before_blob_missing",
+                "A delete operation requires the recorded pre-publication Git blob",
+            )
+        })?;
+        Ok(Self {
             target_path: target_path.into(),
             operation_kind: OperationKind::Delete,
-            before_hash,
+            before_hash: Some(before_hash),
             after_hash: None,
-            before_blob_sha,
+            before_blob_sha: Some(before_blob_sha),
             after_blob_sha: None,
-        }
+        })
     }
 
     pub fn before_precondition(&self) -> OperationPrecondition {
@@ -71,6 +83,14 @@ impl ReleaseOperation {
     }
 
     pub fn inverse(&self, objects: &GitObjectStore) -> AppResult<PlannedFile> {
+        if self.operation_kind == OperationKind::Delete
+            && (self.before_hash.is_none() || self.before_blob_sha.is_none())
+        {
+            return Err(AppError::new(
+                "release_delete_before_data_missing",
+                "A delete operation cannot be reversed without its recorded prior file",
+            ));
+        }
         match (&self.before_hash, &self.before_blob_sha) {
             (None, _) => Ok(PlannedFile {
                 path: self.target_path.clone(),
@@ -136,11 +156,24 @@ mod tests {
             std::env::temp_dir().join(format!("easyblog-operation-{}", uuid::Uuid::new_v4()));
         fs::create_dir(&root).unwrap();
         let store = GitObjectStore::new(&root, "commit");
-        let operation = ReleaseOperation::delete("_posts/old.md", Some(hash(b"old")), None);
+        let operation = ReleaseOperation {
+            target_path: "_posts/old.md".into(),
+            operation_kind: OperationKind::Delete,
+            before_hash: Some(hash(b"old")),
+            after_hash: None,
+            before_blob_sha: None,
+            after_blob_sha: None,
+        };
 
         assert!(operation.inverse(&store).is_err());
 
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn delete_constructor_rejects_missing_before_hash_or_blob() {
+        assert!(ReleaseOperation::delete("_posts/old.md", None, Some("blob".into())).is_err());
+        assert!(ReleaseOperation::delete("_posts/old.md", Some(hash(b"old")), None).is_err());
     }
 
     #[test]
@@ -207,6 +240,59 @@ mod tests {
         assert_eq!(
             inverse.contents,
             PlannedFileContents::Binary(b"old\0bytes".to_vec())
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn inverse_delete_restores_the_recorded_binary_before_blob() {
+        let root =
+            std::env::temp_dir().join(format!("easyblog-operation-{}", uuid::Uuid::new_v4()));
+        fs::create_dir(&root).unwrap();
+        git(&root, &["init"]);
+        fs::create_dir_all(root.join("assets")).unwrap();
+        fs::write(root.join("assets/cover.png"), b"cover\0bytes").unwrap();
+        git(&root, &["add", "."]);
+        git(
+            &root,
+            &[
+                "-c",
+                "user.name=test",
+                "-c",
+                "user.email=test@example.com",
+                "commit",
+                "-m",
+                "initial",
+            ],
+        );
+        let commit = String::from_utf8(
+            Command::new("git")
+                .args(["rev-parse", "HEAD"])
+                .current_dir(&root)
+                .output()
+                .unwrap()
+                .stdout,
+        )
+        .unwrap()
+        .trim()
+        .to_owned();
+        let blob = GitObjectStore::blob_at_commit(&root, &commit, Path::new("assets/cover.png"))
+            .unwrap()
+            .unwrap();
+        let operation = ReleaseOperation::delete(
+            "assets/cover.png",
+            Some(hash(b"cover\0bytes")),
+            Some(blob.sha),
+        )
+        .unwrap();
+
+        let inverse = operation
+            .inverse(&GitObjectStore::new(&root, &commit))
+            .unwrap();
+
+        assert_eq!(
+            inverse.contents,
+            PlannedFileContents::Binary(b"cover\0bytes".to_vec())
         );
         fs::remove_dir_all(root).unwrap();
     }

@@ -11,6 +11,7 @@ pub struct GitBlob {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum GitObjectError {
     InvalidPath { path: PathBuf },
+    NotBlob { path: PathBuf, object_type: String },
     Git(GitCommandError),
 }
 
@@ -33,25 +34,26 @@ impl GitObjectStore {
         commit_sha: &str,
         path: &Path,
     ) -> Result<Option<GitBlob>, GitObjectError> {
-        let object = object_name(commit_sha, path)?;
-        let arguments = ["show", object.as_str()];
-        let output = match GitCommands::run(root, &arguments) {
-            Ok(output) => output,
-            Err(GitCommandError::Failed { stderr, .. }) if is_missing_path(&stderr) => {
-                return Ok(None);
-            }
-            Err(error) => return Err(GitObjectError::Git(error)),
+        let path = checked_path(path)?;
+        let Some((object_type, sha)) = Self::tree_entry(root, commit_sha, path)? else {
+            return Ok(None);
         };
-        let sha = Self::blob_sha(root, &object)?;
-        Ok(Some(GitBlob {
-            sha,
-            bytes: output.stdout,
-        }))
+        if object_type != "blob" {
+            return Err(GitObjectError::NotBlob {
+                path: path.to_owned(),
+                object_type,
+            });
+        }
+        Self::blob_by_sha_at(root, &sha).map(Some)
     }
 
     pub fn blob_by_sha(&self, sha: &str) -> Result<GitBlob, GitObjectError> {
-        let arguments = ["cat-file", "-p", sha];
-        let output = GitCommands::run(&self.root, &arguments).map_err(GitObjectError::Git)?;
+        Self::blob_by_sha_at(&self.root, sha)
+    }
+
+    fn blob_by_sha_at(root: &Path, sha: &str) -> Result<GitBlob, GitObjectError> {
+        let arguments = ["cat-file", "blob", sha];
+        let output = GitCommands::run(root, &arguments).map_err(GitObjectError::Git)?;
         Ok(GitBlob {
             sha: sha.to_owned(),
             bytes: output.stdout,
@@ -62,14 +64,46 @@ impl GitObjectStore {
         Self::blob_at_commit(&self.root, &self.commit_sha, path)
     }
 
-    fn blob_sha(root: &Path, object: &str) -> Result<String, GitObjectError> {
-        let arguments = ["rev-parse", "--verify", object];
+    fn tree_entry(
+        root: &Path,
+        commit_sha: &str,
+        path: &Path,
+    ) -> Result<Option<(String, String)>, GitObjectError> {
+        let path_text = path.to_str().expect("checked path is UTF-8");
+        let arguments = ["ls-tree", "-z", commit_sha, "--", path_text];
         let output = GitCommands::run(root, &arguments).map_err(GitObjectError::Git)?;
-        Ok(String::from_utf8_lossy(&output.stdout).trim().to_owned())
+        let Some(entry) = output
+            .stdout
+            .split(|byte| *byte == 0)
+            .find(|entry| !entry.is_empty())
+        else {
+            return Ok(None);
+        };
+        let header = entry
+            .splitn(2, |byte| *byte == b'\t')
+            .next()
+            .unwrap_or_default();
+        let mut fields = header.split(|byte| *byte == b' ');
+        let _mode = fields.next();
+        let object_type = fields.next();
+        let sha = fields.next();
+        match (object_type, sha) {
+            (Some(object_type), Some(sha)) => Ok(Some((
+                String::from_utf8_lossy(object_type).into_owned(),
+                String::from_utf8_lossy(sha).into_owned(),
+            ))),
+            _ => Err(GitObjectError::Git(GitCommandError::Failed {
+                arguments: arguments
+                    .iter()
+                    .map(|argument| (*argument).to_owned())
+                    .collect(),
+                stderr: "git ls-tree returned an invalid tree entry".into(),
+            })),
+        }
     }
 }
 
-fn object_name(commit_sha: &str, path: &Path) -> Result<String, GitObjectError> {
+fn checked_path(path: &Path) -> Result<&Path, GitObjectError> {
     if path.is_absolute()
         || path
             .components()
@@ -79,14 +113,10 @@ fn object_name(commit_sha: &str, path: &Path) -> Result<String, GitObjectError> 
             path: path.to_owned(),
         });
     }
-    let path = path.to_str().ok_or_else(|| GitObjectError::InvalidPath {
+    path.to_str().ok_or_else(|| GitObjectError::InvalidPath {
         path: path.to_owned(),
     })?;
-    Ok(format!("{commit_sha}:{path}"))
-}
-
-fn is_missing_path(stderr: &str) -> bool {
-    stderr.contains("does not exist in") || stderr.contains("exists on disk, but not in")
+    Ok(path)
 }
 
 #[cfg(test)]
@@ -149,6 +179,42 @@ mod tests {
                 .unwrap()
                 .is_none()
         );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn rejects_tree_paths_instead_of_wrapping_them_as_blobs() {
+        let root = std::env::temp_dir().join(format!("easyblog-objects-{}", uuid::Uuid::new_v4()));
+        fs::create_dir(&root).unwrap();
+        git(&root, &["init"]);
+        fs::create_dir_all(root.join("directory")).unwrap();
+        fs::write(root.join("directory/file.txt"), "contents").unwrap();
+        git(&root, &["add", "."]);
+        git(
+            &root,
+            &[
+                "-c",
+                "user.name=test",
+                "-c",
+                "user.email=test@example.com",
+                "commit",
+                "-m",
+                "initial",
+            ],
+        );
+        let commit = String::from_utf8(
+            Command::new("git")
+                .args(["rev-parse", "HEAD"])
+                .current_dir(&root)
+                .output()
+                .unwrap()
+                .stdout,
+        )
+        .unwrap()
+        .trim()
+        .to_owned();
+
+        assert!(GitObjectStore::blob_at_commit(&root, &commit, Path::new("directory")).is_err());
         fs::remove_dir_all(root).unwrap();
     }
 }

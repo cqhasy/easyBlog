@@ -102,6 +102,14 @@ impl BindingOutput {
         )
     }
 
+    pub fn proposed_article(target_path: PathBuf, content_hash: ContentHash) -> Self {
+        Self::proposed(target_path, content_hash, BindingOutputKind::Article)
+    }
+
+    pub fn proposed_resource(target_path: PathBuf, content_hash: ContentHash) -> Self {
+        Self::proposed(target_path, content_hash, BindingOutputKind::Resource)
+    }
+
     fn new(
         target_path: PathBuf,
         content_hash: ContentHash,
@@ -112,6 +120,15 @@ impl BindingOutput {
             target_path,
             content_hash,
             git_blob_sha: Some(git_blob_sha.into()),
+            kind,
+        }
+    }
+
+    fn proposed(target_path: PathBuf, content_hash: ContentHash, kind: BindingOutputKind) -> Self {
+        Self {
+            target_path,
+            content_hash,
+            git_blob_sha: None,
             kind,
         }
     }
@@ -143,5 +160,15 @@ mod tests {
 
         assert!(!revision.owns_live_outputs());
         assert_eq!(revision.outputs.len(), 1);
+    }
+
+    #[test]
+    fn proposed_outputs_have_no_published_blob() {
+        let output = BindingOutput::proposed_article(
+            PathBuf::from("_posts/post.md"),
+            ContentHash::from_bytes(b"post"),
+        );
+
+        assert_eq!(output.git_blob_sha, None);
     }
 }

@@ -64,4 +64,47 @@ mod tests {
             .transition_to(BatchState::Invalidated)
             .is_ok());
     }
+
+    #[test]
+    fn permits_every_specified_transition_and_rejects_every_other_transition() {
+        let states = [
+            BatchState::Draft,
+            BatchState::Previewed,
+            BatchState::Committing,
+            BatchState::PendingPush,
+            BatchState::Published,
+            BatchState::RollbackPrepared,
+            BatchState::RollbackPending,
+            BatchState::RolledBack,
+            BatchState::Invalidated,
+            BatchState::RecoveryRequired,
+            BatchState::Legacy,
+        ];
+        let allowed = [
+            (BatchState::Draft, BatchState::Previewed),
+            (BatchState::Draft, BatchState::Invalidated),
+            (BatchState::Previewed, BatchState::Committing),
+            (BatchState::Previewed, BatchState::Invalidated),
+            (BatchState::Committing, BatchState::PendingPush),
+            (BatchState::Committing, BatchState::RecoveryRequired),
+            (BatchState::PendingPush, BatchState::Published),
+            (BatchState::PendingPush, BatchState::RecoveryRequired),
+            (BatchState::Published, BatchState::RollbackPrepared),
+            (BatchState::RollbackPrepared, BatchState::RollbackPending),
+            (BatchState::RollbackPrepared, BatchState::RecoveryRequired),
+            (BatchState::RollbackPending, BatchState::RolledBack),
+            (BatchState::RollbackPending, BatchState::RecoveryRequired),
+        ];
+
+        for from in states {
+            for to in states {
+                let expected = allowed.contains(&(from, to));
+                assert_eq!(
+                    from.transition_to(to).is_ok(),
+                    expected,
+                    "{from:?} -> {to:?}"
+                );
+            }
+        }
+    }
 }

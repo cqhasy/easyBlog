@@ -30,7 +30,6 @@ impl ContentHash {
 
 #[cfg(test)]
 mod tests {
-    use std::path::Path;
 
     use super::ContentHash;
 
@@ -40,6 +39,9 @@ mod tests {
             ContentHash::from_bytes(b"a"),
             ContentHash::from_bytes(b"a\n")
         );
-        assert_eq!(ContentHash::read(Path::new("missing")).unwrap(), None);
+        let missing = std::env::temp_dir()
+            .join(format!("easyblog-hash-{}", uuid::Uuid::new_v4()))
+            .join("missing");
+        assert_eq!(ContentHash::read(&missing).unwrap(), None);
     }
 }
