@@ -202,6 +202,12 @@ fn preview_ledger_records(
                 state: BindingState::Active,
                 current_revision: None,
             });
+        if matches!(change.kind, ChangeKind::Deleted) && binding.current_revision.is_none() {
+            return Err(AppError::new(
+                "deleted_change_unpublished",
+                "A deleted source has no published target outputs to remove",
+            ));
+        }
         let files = if matches!(change.kind, ChangeKind::Deleted) {
             FileSet::default()
         } else {
@@ -227,6 +233,12 @@ fn preview_ledger_records(
             .transpose()
             .map_err(|_| AppError::new("storage_error", "Binding outputs could not be loaded"))?;
         let previous = previous.unwrap_or_default();
+        if matches!(change.kind, ChangeKind::Deleted) && previous.is_empty() {
+            return Err(AppError::new(
+                "deleted_change_unpublished",
+                "A deleted source has no published target outputs to remove",
+            ));
+        }
         let previous_by_path = previous
             .iter()
             .map(|output| (output.target_path.clone(), output))
@@ -342,7 +354,9 @@ fn preview_ledger_records(
         } else {
             BindingRevisionState::Active
         };
-        let revision_number = ledger.next_revision_number(&binding.id).unwrap_or(1);
+        let revision_number = ledger
+            .next_revision_number(&binding.id)
+            .map_err(|_| AppError::new("storage_error", "Binding revision could not be created"))?;
         if matches!(state, BindingRevisionState::Deleted) {
             outputs.clear();
         }
@@ -786,5 +800,37 @@ mod tests {
             duplicate.message,
             "Choose each change at most once before previewing"
         );
+    }
+
+    #[test]
+    fn rejects_deleting_a_source_without_published_outputs() {
+        let root = std::env::temp_dir().join(format!("easyblog-preview-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        let database = root.join("easyblog.sqlite");
+        let ledger = crate::storage::ledger::LedgerRepository::open(&database).unwrap();
+        let target = Target {
+            state: TargetState::Ready,
+            adapter: Some(crate::targets::PublishingAdapter::GithubPages),
+            ..Target::new("target", &root)
+        };
+        let change = Change {
+            id: "change".into(),
+            scope_id: "scope".into(),
+            kind: ChangeKind::Deleted,
+            source_identity: "deleted.md".into(),
+            source_path: "deleted.md".into(),
+            previous_path: None,
+            title: Some("Deleted".into()),
+            selected: true,
+            blocked_reason: None,
+            snapshot: None,
+        };
+
+        let error = preview_ledger_records(&ledger, "source", &target, &[change], &root, "head")
+            .unwrap_err();
+
+        assert_eq!(error.code, "deleted_change_unpublished");
+        drop(ledger);
+        fs::remove_dir_all(root).unwrap();
     }
 }

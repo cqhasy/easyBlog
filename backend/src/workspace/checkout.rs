@@ -88,6 +88,9 @@ fn synchronize_pending_push(
         .map(str::parse::<u32>)
         .collect::<Result<Vec<_>, _>>()
         .map_err(|_| CheckoutError::Synchronization)?;
+    if counts == [0, 0] {
+        return Ok(());
+    }
     if counts != [1, 0] {
         return Err(CheckoutError::Synchronization);
     }
@@ -305,6 +308,92 @@ mod tests {
             Checkout::acquire_pending_push(&target, "not-the-commit"),
             Err(CheckoutError::Synchronization)
         ));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn pending_push_accepts_the_expected_commit_already_on_the_remote() {
+        let root = std::env::temp_dir().join(format!("easyblog-checkout-{}", uuid::Uuid::new_v4()));
+        let remote = root.join("remote.git");
+        let seed = root.join("seed");
+        let workspace = root.join("workspace");
+        fs::create_dir_all(&root).unwrap();
+        git(&root, &["init", "--bare", remote.to_str().unwrap()]);
+        fs::create_dir(&seed).unwrap();
+        git(&seed, &["init", "--initial-branch=main"]);
+        fs::create_dir(seed.join("_posts")).unwrap();
+        fs::write(seed.join("_posts/.gitkeep"), "").unwrap();
+        fs::write(seed.join("post.md"), "initial\n").unwrap();
+        git(&seed, &["add", "."]);
+        git(
+            &seed,
+            &[
+                "-c",
+                "user.name=test",
+                "-c",
+                "user.email=test@example.com",
+                "commit",
+                "-m",
+                "Initial",
+            ],
+        );
+        git(
+            &seed,
+            &["remote", "add", "origin", remote.to_str().unwrap()],
+        );
+        git(&seed, &["push", "-u", "origin", "main"]);
+        let output = Command::new("git")
+            .args([
+                "--git-dir",
+                remote.to_str().unwrap(),
+                "symbolic-ref",
+                "HEAD",
+                "refs/heads/main",
+            ])
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        git(
+            &root,
+            &[
+                "clone",
+                remote.to_str().unwrap(),
+                workspace.to_str().unwrap(),
+            ],
+        );
+        fs::write(workspace.join("post.md"), "release\n").unwrap();
+        git(&workspace, &["add", "."]);
+        git(
+            &workspace,
+            &[
+                "-c",
+                "user.name=test",
+                "-c",
+                "user.email=test@example.com",
+                "commit",
+                "-m",
+                "Release",
+            ],
+        );
+        let expected = String::from_utf8(
+            Command::new("git")
+                .args(["rev-parse", "HEAD"])
+                .current_dir(&workspace)
+                .output()
+                .unwrap()
+                .stdout,
+        )
+        .unwrap()
+        .trim()
+        .to_owned();
+        git(&workspace, &["push"]);
+        let mut target = Target::new("target", &workspace);
+        target.repository = "owner/blog".into();
+        target.default_branch = "main".into();
+        target.state = TargetState::Ready;
+        target.adapter = Some(crate::targets::PublishingAdapter::GithubPages);
+
+        assert!(Checkout::acquire_pending_push(&target, &expected).is_ok());
         fs::remove_dir_all(root).unwrap();
     }
 }

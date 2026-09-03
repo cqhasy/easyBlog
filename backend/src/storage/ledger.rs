@@ -1,4 +1,4 @@
-use std::{path::Path, path::PathBuf, sync::Mutex};
+use std::{io, path::Path, path::PathBuf, sync::Mutex};
 
 use rusqlite::{params, types::Type, Connection, OptionalExtension, Result};
 
@@ -194,30 +194,24 @@ impl LedgerRepository {
                 let after_source_path: Option<String> = row.get(5)?;
                 let after_title: Option<String> = row.get(6)?;
                 let after_observed_at: Option<String> = row.get(8)?;
+                let before = snapshot_from_transition_columns(
+                    source_identity.clone(),
+                    before_source_path,
+                    before_title,
+                    before_fingerprint,
+                    before_observed_at,
+                )?;
+                let after = snapshot_from_transition_columns(
+                    source_identity.clone(),
+                    after_source_path,
+                    after_title,
+                    after_fingerprint,
+                    after_observed_at,
+                )?;
                 Ok(SourceTransition {
                     source_identity: source_identity.clone(),
-                    before: before_fingerprint
-                        .zip(before_source_path)
-                        .zip(before_observed_at)
-                        .map(|((fingerprint, source_path), observed_at)| Snapshot {
-                            scope_id: String::new(),
-                            source_identity: source_identity.clone(),
-                            source_path,
-                            title: before_title,
-                            fingerprint,
-                            observed_at,
-                        }),
-                    after: after_fingerprint
-                        .zip(after_source_path)
-                        .zip(after_observed_at)
-                        .map(|((fingerprint, source_path), observed_at)| Snapshot {
-                            scope_id: String::new(),
-                            source_identity,
-                            source_path,
-                            title: after_title,
-                            fingerprint,
-                            observed_at,
-                        }),
+                    before,
+                    after,
                 })
             })?
             .collect::<Result<Vec<_>>>()?;
@@ -482,6 +476,35 @@ impl LedgerRepository {
             transaction.execute("UPDATE target_revisions SET sequence = sequence + 1, head_sha = ?2, active_batch_id = NULL WHERE target_id = ?1 AND active_batch_id = ?3", params![batch.target_id, remote_head, batch_id])?;
         }
         transaction.commit()
+    }
+}
+
+fn snapshot_from_transition_columns(
+    source_identity: String,
+    source_path: Option<String>,
+    title: Option<String>,
+    fingerprint: Option<String>,
+    observed_at: Option<String>,
+) -> Result<Option<Snapshot>> {
+    match (source_path, fingerprint, observed_at) {
+        (None, None, None) => Ok(None),
+        (Some(source_path), Some(fingerprint), Some(observed_at)) => Ok(Some(Snapshot {
+            scope_id: String::new(),
+            source_identity,
+            source_path,
+            title,
+            fingerprint,
+            observed_at,
+        })),
+        _ => Err(rusqlite::Error::FromSqlConversionFailure(
+            0,
+            Type::Text,
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                "Release source transition contains an incomplete snapshot",
+            )
+            .into(),
+        )),
     }
 }
 
@@ -812,6 +835,27 @@ mod tests {
         stale.source_transitions.clear();
 
         assert!(ledger.create_preview(&stale).is_err());
+        drop(ledger);
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn rejects_a_source_transition_with_a_partial_snapshot() {
+        let path = temp_db();
+        create_scope_and_target(&path);
+        let ledger = LedgerRepository::open(&path).unwrap();
+        ledger.create_preview(&preview()).unwrap();
+        let connection = Connection::open(&path).unwrap();
+        connection
+            .execute(
+                "UPDATE release_source_transitions SET after_observed_at = NULL WHERE batch_id = 'batch'",
+                [],
+            )
+            .unwrap();
+        drop(connection);
+
+        assert!(ledger.load_source_transitions("batch").is_err());
+
         drop(ledger);
         std::fs::remove_file(path).unwrap();
     }

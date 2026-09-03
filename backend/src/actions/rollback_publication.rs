@@ -39,7 +39,6 @@ pub fn execute(
             )
         })?;
         crate::actions::retry_release::execute(changes, ledger, publications, batch_id, target)?;
-        restore_source_baselines(changes, ledger, batch_id, &batch.scope_id)?;
         return Ok(commit);
     }
     if batch.state == BatchState::Legacy {
@@ -66,21 +65,26 @@ pub fn execute(
             "This publication has no reversible operation ledger",
         ));
     }
-    let conflicts = operations
-        .iter()
-        .filter_map(|entry| {
-            let actual =
-                ContentHash::read(&checkout.root().join(&entry.operation.target_path)).ok()?;
-            (actual != entry.operation.after_hash).then(|| ReleaseConflict {
+    let mut conflicts = Vec::new();
+    for entry in &operations {
+        let actual = ContentHash::read(&checkout.root().join(&entry.operation.target_path))
+            .map_err(|_| {
+                AppError::new(
+                    "target_file_unreadable",
+                    "A target file could not be inspected",
+                )
+            })?;
+        if actual != entry.operation.after_hash {
+            conflicts.push(ReleaseConflict {
                 id: uuid::Uuid::new_v4().to_string(),
                 target_path: entry.operation.target_path.clone(),
                 code: "target_external_change".into(),
                 expected_hash: entry.operation.after_hash.clone(),
                 actual_hash: actual,
                 created_at: Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true),
-            })
-        })
-        .collect::<Vec<_>>();
+            });
+        }
+    }
     if !conflicts.is_empty() {
         let _ = ledger.record_conflicts(batch_id, &conflicts);
         return Err(AppError::new(
@@ -91,46 +95,81 @@ pub fn execute(
     if !ledger
         .acquire_target_mutation(&target.id, batch_id)
         .map_err(|_| AppError::new("storage_error", "Target release state could not be claimed"))?
-        || !ledger
-            .begin_rollback(batch_id)
-            .map_err(|_| AppError::new("storage_error", "Rollback could not be started"))?
     {
         return Err(AppError::new(
             "publication_not_reversible",
             "Another target operation is already active",
         ));
     }
-    let commit_sha = batch.commit_sha.ok_or_else(|| {
-        AppError::new(
-            "publication_invalid",
-            "The published release has no recorded commit",
-        )
-    })?;
+    match ledger.begin_rollback(batch_id) {
+        Ok(true) => {}
+        Ok(false) => {
+            let _ = ledger.mark_recovery_required(batch_id, "rollback_begin_failed");
+            return Err(AppError::new(
+                "publication_not_reversible",
+                "Rollback could not be started safely",
+            ));
+        }
+        Err(_) => {
+            let _ = ledger.mark_recovery_required(batch_id, "rollback_begin_failed");
+            return Err(AppError::new(
+                "storage_error",
+                "Rollback could not be started",
+            ));
+        }
+    }
+    let commit_sha = match batch.commit_sha {
+        Some(commit_sha) => commit_sha,
+        None => {
+            let _ = ledger.mark_recovery_required(batch_id, "missing_publish_commit");
+            return Err(AppError::new(
+                "publication_invalid",
+                "The published release has no recorded commit",
+            ));
+        }
+    };
     let objects = GitObjectStore::new(checkout.root(), commit_sha);
     let mut inverse = FileSet::default();
     for entry in operations.iter().rev() {
-        inverse
-            .insert(entry.operation.inverse(&objects)?)
-            .map_err(|_| {
-                AppError::new(
-                    "release_plan_invalid",
-                    "Rollback contains duplicate target paths",
-                )
-            })?;
+        let planned = match entry.operation.inverse(&objects) {
+            Ok(planned) => planned,
+            Err(error) => {
+                let _ = ledger.mark_recovery_required(batch_id, error.code);
+                return Err(error);
+            }
+        };
+        if let Err(error) = inverse.insert(planned).map_err(|_| {
+            AppError::new(
+                "release_plan_invalid",
+                "Rollback contains duplicate target paths",
+            )
+        }) {
+            let _ = ledger.mark_recovery_required(batch_id, error.code);
+            return Err(error);
+        }
     }
-    stage::apply(checkout.root(), &inverse)?;
-    let rollback_sha = commit::create(checkout.root(), "Rollback easyBlog release")?;
+    if let Err(error) = stage::apply(checkout.root(), &inverse) {
+        let _ = ledger.mark_recovery_required(batch_id, error.code);
+        return Err(error);
+    }
+    let rollback_sha = match commit::create(checkout.root(), "Rollback easyBlog release") {
+        Ok(rollback_sha) => rollback_sha,
+        Err(error) => {
+            let _ = ledger.mark_recovery_required(batch_id, error.code);
+            return Err(error);
+        }
+    };
     ledger
         .mark_rollback_pending(batch_id, &rollback_sha)
-        .map_err(|_| AppError::new("storage_error", "Rollback commit could not be recorded"))?;
+        .map_err(|_| {
+            let _ = ledger.mark_recovery_required(batch_id, "rollback_commit_record_failed");
+            AppError::new("storage_error", "Rollback commit could not be recorded")
+        })?;
+    publications
+        .mark_rollback_pending(batch_id, &rollback_sha)
+        .map_err(|_| AppError::new("storage_error", "Release history could not be updated"))?;
     crate::releases::push::execute(checkout.root())?;
-    ledger
-        .finalize_rollback(
-            batch_id,
-            &rollback_sha,
-            &Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true),
-        )
-        .map_err(|_| AppError::new("storage_error", "Release ledger could not be finalized"))?;
+    restore_source_baselines(changes, ledger, batch_id, &batch.scope_id)?;
     publications
         .mark_rolled_back(
             batch_id,
@@ -138,7 +177,13 @@ pub fn execute(
             &Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true),
         )
         .map_err(|_| AppError::new("storage_error", "Release history could not be updated"))?;
-    restore_source_baselines(changes, ledger, batch_id, &batch.scope_id)?;
+    ledger
+        .finalize_rollback(
+            batch_id,
+            &rollback_sha,
+            &Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true),
+        )
+        .map_err(|_| AppError::new("storage_error", "Release ledger could not be finalized"))?;
     Ok(rollback_sha)
 }
 
