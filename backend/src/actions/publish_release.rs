@@ -52,8 +52,7 @@ pub fn execute(
         .list_snapshots(&scope.id)
         .map_err(|_| AppError::new("storage_error", "Snapshots could not be loaded"))?;
     preview_release::validate_publishable_source(&source)?;
-    let checkout = Checkout::acquire(&input.target)
-        .map_err(|_| AppError::new("target_unavailable", "The publishing target is not ready"))?;
+    let checkout = Checkout::acquire(&input.target).map_err(preview_release::checkout_error)?;
     let files = preview_release::build_file_set(&source.path, &input.target, &selected)?;
     stage::apply(checkout.root(), &files)?;
     let commit_sha = commit::create(checkout.root(), "Publish easyBlog release")?;

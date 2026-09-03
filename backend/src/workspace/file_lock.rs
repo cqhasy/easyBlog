@@ -47,6 +47,8 @@ impl Drop for FileLock {
 
 #[cfg(test)]
 mod tests {
+    use std::{process::Command, time::Duration};
+
     use super::*;
 
     #[test]
@@ -81,5 +83,32 @@ mod tests {
         drop(second_lock);
         drop(first_lock);
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn releases_a_workspace_after_a_timed_process_is_reaped() {
+        let directory = std::env::temp_dir().join(format!(
+            "easyblog-workspace-timeout-{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir(&directory).unwrap();
+        {
+            let _lock = FileLock::acquire(&directory).unwrap();
+            let mut command = if cfg!(windows) {
+                let mut command = Command::new("powershell");
+                command.args(["-NoProfile", "-Command", "Start-Sleep -Seconds 5"]);
+                command
+            } else {
+                let mut command = Command::new("sh");
+                command.args(["-c", "sleep 5"]);
+                command
+            };
+            assert!(matches!(
+                crate::providers::git::run_with_timeout(&mut command, Duration::from_millis(50)),
+                Err(crate::providers::git::GitCommandError::TimedOut)
+            ));
+        }
+        assert!(FileLock::acquire(&directory).is_ok());
+        std::fs::remove_dir_all(directory).unwrap();
     }
 }

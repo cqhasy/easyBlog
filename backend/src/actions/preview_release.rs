@@ -219,7 +219,7 @@ fn insert(files: &mut FileSet, file: PlannedFile) -> AppResult<()> {
         )
     })
 }
-fn checkout_error(error: crate::workspace::CheckoutError) -> AppError {
+pub(crate) fn checkout_error(error: crate::workspace::CheckoutError) -> AppError {
     match error {
         crate::workspace::CheckoutError::WorkingTree(
             crate::workspace::WorkingTreeError::Dirty { .. },
@@ -231,6 +231,10 @@ fn checkout_error(error: crate::workspace::CheckoutError) -> AppError {
         crate::workspace::CheckoutError::Synchronization => AppError::new(
             "workspace_needs_recovery",
             "The GitHub repository changed in a way easyBlog cannot update safely",
+        ),
+        crate::workspace::CheckoutError::TimedOut => AppError::new(
+            "git_timeout",
+            "GitHub synchronization timed out. Check your network and try again.",
         ),
         _ => AppError::new("target_unavailable", "The publishing target is not ready"),
     }
