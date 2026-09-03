@@ -1,4 +1,7 @@
-use std::{collections::BTreeSet, path::Path};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    path::Path,
+};
 
 use chrono::{SecondsFormat, Utc};
 
@@ -7,18 +10,22 @@ use crate::{
     content::normalize_local_markdown,
     providers::git::GitCommands,
     providers::local::reader::LocalReader,
-    releases::{FileSet, PlannedFile, PlannedFileContents, ReleaseBatch, ReleasePlan},
+    releases::{
+        ArticleBinding, BindingOutput, BindingOutputKind, BindingRevision, BindingRevisionState,
+        BindingState, BindingTransition, ContentHash, FileSet, PlannedFile, PlannedFileContents,
+        ReleaseBatch, ReleaseOperation, ReleasePlan,
+    },
     scopes::scope::Scope,
     shared::errors::{AppError, AppResult},
     sources::source::Source,
     storage::{
         changes::ChangeRepository,
-        ledger::{LedgerBatch, LedgerRepository, PreviewRecord, SourceTransition},
+        ledger::{LedgerBatch, LedgerOperation, LedgerRepository, PreviewRecord, SourceTransition},
         scopes::ScopeRepository,
         sources::SourceRepository,
     },
     targets::{Target, TargetState, Template},
-    workspace::Checkout,
+    workspace::{Checkout, GitObjectStore},
 };
 
 pub struct PreviewReleaseInput {
@@ -55,7 +62,12 @@ pub fn execute(
         .ok_or_else(|| AppError::new("source_not_found", "Source no longer exists"))?;
     validate_publishable_source(&source)?;
     let checkout = Checkout::acquire(&input.target).map_err(checkout_error)?;
-    let files = build_file_set(&source.path, &input.target, &selected)?;
+    let live_selected = selected
+        .iter()
+        .filter(|change| !matches!(change.kind, ChangeKind::Deleted))
+        .cloned()
+        .collect::<Vec<_>>();
+    let mut files = build_file_set(&source.path, &input.target, &live_selected)?;
     let batch = ReleaseBatch {
         id: uuid::Uuid::new_v4().to_string(),
         scope_id: scope.id.clone(),
@@ -72,19 +84,36 @@ pub fn execute(
             "The target workspace has no publishable Git commit",
         )
     })?;
+    let (target_sequence_before, target_head_before) = ledger
+        .target_revision(&input.target.id, &head)
+        .map_err(|_| AppError::new("storage_error", "Target release state could not be loaded"))?;
+    let (target_sequence_before, _) = if target_head_before == head {
+        (target_sequence_before, target_head_before)
+    } else {
+        ledger
+            .observe_target_head(&input.target.id, &head)
+            .map_err(|_| {
+                AppError::new("storage_error", "Target release state could not be updated")
+            })?
+    };
+    let (bindings, revisions, operations, binding_transitions) = preview_ledger_records(
+        ledger,
+        &source.path,
+        &input.target,
+        &selected,
+        checkout.root(),
+        &head,
+    )?;
+    append_frozen_deletes(&mut files, &operations)?;
     let source_transitions = selected
         .iter()
         .map(|change| SourceTransition {
             source_identity: change.source_identity.clone(),
-            source_path: change.source_path.clone(),
-            before_fingerprint: snapshots
+            before: snapshots
                 .iter()
                 .find(|snapshot| snapshot.source_identity == change.source_identity)
-                .map(|snapshot| snapshot.fingerprint.clone()),
-            after_fingerprint: change
-                .snapshot
-                .as_ref()
-                .map(|snapshot| snapshot.fingerprint.clone()),
+                .cloned(),
+            after: change.snapshot.clone(),
         })
         .collect();
     ledger
@@ -95,7 +124,7 @@ pub fn execute(
                 target_id: input.target.id.clone(),
                 change_ids: batch.change_ids.clone(),
                 scope_revision: scope.revision,
-                target_sequence_before: 0,
+                target_sequence_before,
                 target_head_before: head,
                 state: crate::releases::BatchState::Previewed,
                 created_at: now.clone(),
@@ -106,10 +135,10 @@ pub fn execute(
                 rolled_back_at: None,
                 failure_code: None,
             },
-            bindings: vec![],
-            revisions: vec![],
-            operations: vec![],
-            binding_transitions: vec![],
+            bindings,
+            revisions,
+            operations,
+            binding_transitions,
             source_transitions,
         })
         .map_err(|_| {
@@ -119,6 +148,229 @@ pub fn execute(
             )
         })?;
     ReleasePlan::new(batch.id.clone(), batch, false, &files, checkout.root())
+}
+
+pub(crate) fn append_frozen_deletes(
+    files: &mut FileSet,
+    operations: &[LedgerOperation],
+) -> AppResult<()> {
+    for operation in operations {
+        if operation.operation.after_hash.is_none() {
+            files
+                .insert(PlannedFile {
+                    path: operation.operation.target_path.clone(),
+                    contents: PlannedFileContents::Delete,
+                })
+                .map_err(|_| {
+                    AppError::new(
+                        "release_preview_invalidated",
+                        "Frozen release operations overlap",
+                    )
+                })?;
+        }
+    }
+    Ok(())
+}
+
+fn preview_ledger_records(
+    ledger: &LedgerRepository,
+    source_root: &str,
+    target: &Target,
+    selected: &[Change],
+    root: &Path,
+    head: &str,
+) -> AppResult<(
+    Vec<ArticleBinding>,
+    Vec<BindingRevision>,
+    Vec<LedgerOperation>,
+    Vec<BindingTransition>,
+)> {
+    let objects = GitObjectStore::new(root, head);
+    let mut bindings = Vec::new();
+    let mut revisions = Vec::new();
+    let mut operations = Vec::new();
+    let mut transitions = Vec::new();
+    for change in selected {
+        let binding = ledger
+            .binding_for_source(&target.id, &change.source_identity)
+            .map_err(|_| AppError::new("storage_error", "Article binding could not be loaded"))?
+            .unwrap_or_else(|| ArticleBinding {
+                id: uuid::Uuid::new_v4().to_string(),
+                target_id: target.id.clone(),
+                scope_id: change.scope_id.clone(),
+                source_identity: change.source_identity.clone(),
+                state: BindingState::Active,
+                current_revision: None,
+            });
+        let files = if matches!(change.kind, ChangeKind::Deleted) {
+            FileSet::default()
+        } else {
+            build_file_set(source_root, target, std::slice::from_ref(change))?
+        };
+        let revision_id = uuid::Uuid::new_v4().to_string();
+        let mut desired = BTreeMap::new();
+        for file in files.files() {
+            if matches!(file.contents, PlannedFileContents::Delete) {
+                continue;
+            }
+            let after_hash = match &file.contents {
+                PlannedFileContents::Text(contents) => ContentHash::from_bytes(contents.as_bytes()),
+                PlannedFileContents::Binary(contents) => ContentHash::from_bytes(contents),
+                PlannedFileContents::Delete => unreachable!(),
+            };
+            desired.insert(file.path.clone(), (after_hash, output_kind(&file.path)));
+        }
+        let previous = binding
+            .current_revision
+            .as_deref()
+            .map(|revision| ledger.revision_outputs(revision))
+            .transpose()
+            .map_err(|_| AppError::new("storage_error", "Binding outputs could not be loaded"))?;
+        let previous = previous.unwrap_or_default();
+        let previous_by_path = previous
+            .iter()
+            .map(|output| (output.target_path.clone(), output))
+            .collect::<BTreeMap<_, _>>();
+        let mut outputs = desired
+            .iter()
+            .map(|(target_path, (content_hash, kind))| BindingOutput {
+                target_path: target_path.clone(),
+                content_hash: content_hash.clone(),
+                git_blob_sha: None,
+                kind: *kind,
+            })
+            .collect::<Vec<_>>();
+        for (path, (after_hash, _)) in &desired {
+            match ledger.output_owner(&target.id, path).map_err(|_| {
+                AppError::new("storage_error", "Target ownership could not be loaded")
+            })? {
+                Some(owner) if owner != binding.id => {
+                    return Err(AppError::new(
+                        "target_path_conflict",
+                        format!("Target path is owned by another source: {}", path.display()),
+                    ))
+                }
+                None if objects
+                    .blob_at_path(path)
+                    .map_err(|_| {
+                        AppError::new(
+                            "target_file_unreadable",
+                            "A target file could not be inspected",
+                        )
+                    })?
+                    .is_some()
+                    && !previous_by_path.contains_key(path) =>
+                {
+                    return Err(AppError::new(
+                        "target_path_unowned",
+                        format!("Target path is not owned by easyBlog: {}", path.display()),
+                    ))
+                }
+                _ => {}
+            }
+            let before = objects.blob_at_path(path).map_err(|_| {
+                AppError::new(
+                    "target_file_unreadable",
+                    "A target file could not be inspected",
+                )
+            })?;
+            let before_hash = before
+                .as_ref()
+                .map(|blob| ContentHash::from_bytes(&blob.bytes));
+            if let Some(previous) = previous_by_path.get(path) {
+                if before_hash.as_ref() != Some(&previous.content_hash) {
+                    return Err(AppError::new(
+                        "target_external_change",
+                        format!("Target file changed externally: {}", path.display()),
+                    ));
+                }
+            }
+            let operation = ReleaseOperation::write(
+                path.clone(),
+                before_hash,
+                after_hash.clone(),
+                before.map(|blob| blob.sha),
+            );
+            operations.push(LedgerOperation {
+                id: uuid::Uuid::new_v4().to_string(),
+                binding_id: binding.id.clone(),
+                ordinal: operations.len() as i64,
+                operation,
+            });
+        }
+        for old in previous
+            .iter()
+            .filter(|old| !desired.contains_key(&old.target_path))
+        {
+            let before = objects
+                .blob_at_path(&old.target_path)
+                .map_err(|_| {
+                    AppError::new(
+                        "target_file_unreadable",
+                        "A target file could not be inspected",
+                    )
+                })?
+                .ok_or_else(|| {
+                    AppError::new(
+                        "target_external_change",
+                        format!("Target file is missing: {}", old.target_path.display()),
+                    )
+                })?;
+            let before_hash = ContentHash::from_bytes(&before.bytes);
+            if before_hash != old.content_hash {
+                return Err(AppError::new(
+                    "target_external_change",
+                    format!(
+                        "Target file changed externally: {}",
+                        old.target_path.display()
+                    ),
+                ));
+            }
+            operations.push(LedgerOperation {
+                id: uuid::Uuid::new_v4().to_string(),
+                binding_id: binding.id.clone(),
+                ordinal: operations.len() as i64,
+                operation: ReleaseOperation::delete(
+                    old.target_path.clone(),
+                    Some(before_hash),
+                    Some(before.sha),
+                )?,
+            });
+        }
+        let state = if matches!(change.kind, ChangeKind::Deleted) {
+            BindingRevisionState::Deleted
+        } else {
+            BindingRevisionState::Active
+        };
+        let revision_number = ledger.next_revision_number(&binding.id).unwrap_or(1);
+        if matches!(state, BindingRevisionState::Deleted) {
+            outputs.clear();
+        }
+        revisions.push(BindingRevision {
+            id: revision_id.clone(),
+            binding_id: binding.id.clone(),
+            revision_number,
+            state,
+            outputs,
+        });
+        transitions.push(BindingTransition {
+            binding_id: binding.id.clone(),
+            before_revision_id: binding.current_revision.clone(),
+            after_revision_id: Some(revision_id),
+        });
+        if binding.current_revision.is_none() {
+            bindings.push(binding);
+        }
+    }
+    Ok((bindings, revisions, operations, transitions))
+}
+
+fn output_kind(path: &Path) -> BindingOutputKind {
+    if path.extension().is_some_and(|extension| extension == "md") {
+        BindingOutputKind::Article
+    } else {
+        BindingOutputKind::Resource
+    }
 }
 
 pub(crate) fn validate_scope_target(scope: &Scope, target: &Target) -> AppResult<()> {
@@ -274,6 +526,56 @@ pub(crate) fn build_file_set(
         }
     }
     Ok(files)
+}
+
+pub(crate) fn validate_frozen_operations(
+    root: &Path,
+    files: &FileSet,
+    operations: &[LedgerOperation],
+) -> AppResult<()> {
+    if files.files().len() != operations.len() {
+        return Err(AppError::new(
+            "release_preview_invalidated",
+            "The generated target files changed after preview",
+        ));
+    }
+    for file in files.files() {
+        let operation = operations
+            .iter()
+            .find(|operation| operation.operation.target_path == file.path)
+            .ok_or_else(|| {
+                AppError::new(
+                    "release_preview_invalidated",
+                    "The generated target files changed after preview",
+                )
+            })?;
+        let expected_after = match &file.contents {
+            PlannedFileContents::Text(contents) => {
+                Some(ContentHash::from_bytes(contents.as_bytes()))
+            }
+            PlannedFileContents::Binary(contents) => Some(ContentHash::from_bytes(contents)),
+            PlannedFileContents::Delete => None,
+        };
+        if operation.operation.after_hash != expected_after {
+            return Err(AppError::new(
+                "release_preview_invalidated",
+                "The generated target files changed after preview",
+            ));
+        }
+        let actual_before = ContentHash::read(&root.join(&file.path)).map_err(|_| {
+            AppError::new(
+                "target_file_unreadable",
+                "A target file could not be inspected",
+            )
+        })?;
+        if actual_before != operation.operation.before_hash {
+            return Err(AppError::new(
+                "target_external_change",
+                format!("Target file changed externally: {}", file.path.display()),
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn insert(files: &mut FileSet, file: PlannedFile) -> AppResult<()> {

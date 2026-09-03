@@ -6,6 +6,7 @@ use crate::releases::{
     ArticleBinding, BatchState, BindingOutputKind, BindingRevision, BindingRevisionState,
     BindingState, BindingTransition, ContentHash, OperationKind, ReleaseOperation,
 };
+use crate::tracking::snapshot::Snapshot;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LedgerBatch {
@@ -37,9 +38,8 @@ pub struct LedgerOperation {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SourceTransition {
     pub source_identity: String,
-    pub source_path: String,
-    pub before_fingerprint: Option<String>,
-    pub after_fingerprint: Option<String>,
+    pub before: Option<Snapshot>,
+    pub after: Option<Snapshot>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -140,8 +140,8 @@ impl LedgerRepository {
         }
         for transition in &preview.source_transitions {
             transaction.execute(
-                "INSERT INTO release_source_transitions (batch_id, source_identity, source_path, before_fingerprint, after_fingerprint) VALUES (?1, ?2, ?3, ?4, ?5)",
-                params![preview.batch.id, transition.source_identity, transition.source_path, transition.before_fingerprint, transition.after_fingerprint],
+                "INSERT INTO release_source_transitions (batch_id, source_identity, before_source_path, before_title, before_fingerprint, before_observed_at, after_source_path, after_title, after_fingerprint, after_observed_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                params![preview.batch.id, transition.source_identity, transition.before.as_ref().map(|snapshot| &snapshot.source_path), transition.before.as_ref().and_then(|snapshot| snapshot.title.as_ref()), transition.before.as_ref().map(|snapshot| &snapshot.fingerprint), transition.before.as_ref().map(|snapshot| &snapshot.observed_at), transition.after.as_ref().map(|snapshot| &snapshot.source_path), transition.after.as_ref().and_then(|snapshot| snapshot.title.as_ref()), transition.after.as_ref().map(|snapshot| &snapshot.fingerprint), transition.after.as_ref().map(|snapshot| &snapshot.observed_at)],
             )?;
         }
         transaction.commit()
@@ -182,18 +182,152 @@ impl LedgerRepository {
             .connection
             .lock()
             .expect("ledger repository lock poisoned");
-        let mut statement = connection.prepare("SELECT source_identity, source_path, before_fingerprint, after_fingerprint FROM release_source_transitions WHERE batch_id = ?1 ORDER BY source_identity")?;
+        let mut statement = connection.prepare("SELECT source_identity, before_source_path, before_title, before_fingerprint, before_observed_at, after_source_path, after_title, after_fingerprint, after_observed_at FROM release_source_transitions WHERE batch_id = ?1 ORDER BY source_identity")?;
         let transitions = statement
             .query_map([batch_id], |row| {
+                let source_identity: String = row.get(0)?;
+                let before_fingerprint: Option<String> = row.get(3)?;
+                let after_fingerprint: Option<String> = row.get(7)?;
+                let before_source_path: Option<String> = row.get(1)?;
+                let before_title: Option<String> = row.get(2)?;
+                let before_observed_at: Option<String> = row.get(4)?;
+                let after_source_path: Option<String> = row.get(5)?;
+                let after_title: Option<String> = row.get(6)?;
+                let after_observed_at: Option<String> = row.get(8)?;
                 Ok(SourceTransition {
-                    source_identity: row.get(0)?,
-                    source_path: row.get(1)?,
-                    before_fingerprint: row.get(2)?,
-                    after_fingerprint: row.get(3)?,
+                    source_identity: source_identity.clone(),
+                    before: before_fingerprint
+                        .zip(before_source_path)
+                        .zip(before_observed_at)
+                        .map(|((fingerprint, source_path), observed_at)| Snapshot {
+                            scope_id: String::new(),
+                            source_identity: source_identity.clone(),
+                            source_path,
+                            title: before_title,
+                            fingerprint,
+                            observed_at,
+                        }),
+                    after: after_fingerprint
+                        .zip(after_source_path)
+                        .zip(after_observed_at)
+                        .map(|((fingerprint, source_path), observed_at)| Snapshot {
+                            scope_id: String::new(),
+                            source_identity,
+                            source_path,
+                            title: after_title,
+                            fingerprint,
+                            observed_at,
+                        }),
                 })
             })?
             .collect::<Result<Vec<_>>>()?;
         Ok(transitions)
+    }
+
+    pub fn target_revision(&self, target_id: &str, head_sha: &str) -> Result<(i64, String)> {
+        let connection = self
+            .connection
+            .lock()
+            .expect("ledger repository lock poisoned");
+        connection.execute(
+            "INSERT INTO target_revisions (target_id, sequence, head_sha, active_batch_id)
+             VALUES (?1, 0, ?2, NULL) ON CONFLICT(target_id) DO NOTHING",
+            params![target_id, head_sha],
+        )?;
+        connection.query_row(
+            "SELECT sequence, head_sha FROM target_revisions WHERE target_id = ?1",
+            [target_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+    }
+
+    pub fn observe_target_head(&self, target_id: &str, head_sha: &str) -> Result<(i64, String)> {
+        let connection = self
+            .connection
+            .lock()
+            .expect("ledger repository lock poisoned");
+        connection.execute(
+            "UPDATE target_revisions SET head_sha = ?2 WHERE target_id = ?1 AND active_batch_id IS NULL",
+            params![target_id, head_sha],
+        )?;
+        connection.query_row(
+            "SELECT sequence, head_sha FROM target_revisions WHERE target_id = ?1",
+            [target_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+    }
+
+    pub fn binding_for_source(
+        &self,
+        target_id: &str,
+        source_identity: &str,
+    ) -> Result<Option<ArticleBinding>> {
+        let connection = self
+            .connection
+            .lock()
+            .expect("ledger repository lock poisoned");
+        connection
+            .query_row(
+                "SELECT binding_id, target_id, scope_id, source_identity, state, current_revision_id FROM article_bindings WHERE target_id = ?1 AND source_identity = ?2",
+                params![target_id, source_identity],
+                |row| Ok(ArticleBinding {
+                    id: row.get(0)?, target_id: row.get(1)?, scope_id: row.get(2)?, source_identity: row.get(3)?, state: binding_state_from(&row.get::<_, String>(4)?)?, current_revision: row.get(5)?,
+                }),
+            )
+            .optional()
+    }
+
+    pub fn next_revision_number(&self, binding_id: &str) -> Result<i64> {
+        let connection = self
+            .connection
+            .lock()
+            .expect("ledger repository lock poisoned");
+        connection.query_row(
+            "SELECT COALESCE(MAX(revision_number), 0) + 1 FROM binding_revisions WHERE binding_id = ?1",
+            [binding_id],
+            |row| row.get(0),
+        )
+    }
+
+    pub fn revision_outputs(
+        &self,
+        revision_id: &str,
+    ) -> Result<Vec<crate::releases::BindingOutput>> {
+        let connection = self
+            .connection
+            .lock()
+            .expect("ledger repository lock poisoned");
+        let mut statement = connection.prepare(
+            "SELECT target_path, content_hash, git_blob_sha, output_kind FROM binding_outputs WHERE revision_id = ?1 ORDER BY target_path",
+        )?;
+        let outputs = statement
+            .query_map([revision_id], |row| {
+                Ok(crate::releases::BindingOutput {
+                    target_path: PathBuf::from(row.get::<_, String>(0)?),
+                    content_hash: ContentHash(row.get(1)?),
+                    git_blob_sha: row.get(2)?,
+                    kind: binding_output_kind_from(&row.get::<_, String>(3)?)?,
+                })
+            })?
+            .collect();
+        outputs
+    }
+
+    pub fn output_owner(&self, target_id: &str, path: &Path) -> Result<Option<String>> {
+        let connection = self
+            .connection
+            .lock()
+            .expect("ledger repository lock poisoned");
+        connection
+            .query_row(
+                "SELECT bindings.binding_id
+                 FROM article_bindings bindings
+                 JOIN binding_outputs outputs ON outputs.revision_id = bindings.current_revision_id
+                 WHERE bindings.target_id = ?1 AND outputs.target_path = ?2",
+                params![target_id, path.to_string_lossy()],
+                |row| row.get(0),
+            )
+            .optional()
     }
 
     pub fn begin_publish(&self, batch_id: &str) -> Result<bool> {
@@ -213,6 +347,31 @@ impl LedgerRepository {
             .lock()
             .expect("ledger repository lock poisoned");
         if connection.execute("UPDATE release_batches SET state = 'pending_push', commit_sha = ?2 WHERE batch_id = ?1 AND state = 'committing'", params![batch_id, commit_sha])? != 1 {
+            return Err(rusqlite::Error::InvalidQuery);
+        }
+        Ok(())
+    }
+
+    pub fn begin_rollback(&self, batch_id: &str) -> Result<bool> {
+        let connection = self
+            .connection
+            .lock()
+            .expect("ledger repository lock poisoned");
+        Ok(connection.execute(
+            "UPDATE release_batches SET state = 'rollback_prepared' WHERE batch_id = ?1 AND state = 'published' AND EXISTS (SELECT 1 FROM target_revisions WHERE target_revisions.target_id = release_batches.target_id AND target_revisions.active_batch_id = release_batches.batch_id)",
+            [batch_id],
+        )? == 1)
+    }
+
+    pub fn mark_rollback_pending(&self, batch_id: &str, commit_sha: &str) -> Result<()> {
+        let connection = self
+            .connection
+            .lock()
+            .expect("ledger repository lock poisoned");
+        if connection.execute(
+            "UPDATE release_batches SET state = 'rollback_pending', rollback_commit_sha = ?2 WHERE batch_id = ?1 AND state = 'rollback_prepared'",
+            params![batch_id, commit_sha],
+        )? != 1 {
             return Err(rusqlite::Error::InvalidQuery);
         }
         Ok(())
@@ -433,6 +592,20 @@ fn binding_state_name(value: BindingState) -> &'static str {
         BindingState::RecoveryRequired => "recovery_required",
     }
 }
+
+fn binding_state_from(value: &str) -> Result<BindingState> {
+    match value {
+        "active" => Ok(BindingState::Active),
+        "deleted" => Ok(BindingState::Deleted),
+        "needs_reconciliation" => Ok(BindingState::NeedsReconciliation),
+        "recovery_required" => Ok(BindingState::RecoveryRequired),
+        _ => Err(rusqlite::Error::FromSqlConversionFailure(
+            4,
+            Type::Text,
+            format!("Unknown binding state: {value}").into(),
+        )),
+    }
+}
 fn binding_revision_state_name(value: BindingRevisionState) -> &'static str {
     match value {
         BindingRevisionState::Active => "active",
@@ -443,6 +616,18 @@ fn binding_output_kind_name(value: BindingOutputKind) -> &'static str {
     match value {
         BindingOutputKind::Article => "article",
         BindingOutputKind::Resource => "resource",
+    }
+}
+
+fn binding_output_kind_from(value: &str) -> Result<BindingOutputKind> {
+    match value {
+        "article" => Ok(BindingOutputKind::Article),
+        "resource" => Ok(BindingOutputKind::Resource),
+        _ => Err(rusqlite::Error::FromSqlConversionFailure(
+            3,
+            Type::Text,
+            format!("Unknown binding output kind: {value}").into(),
+        )),
     }
 }
 
@@ -526,9 +711,15 @@ mod tests {
             }],
             source_transitions: vec![SourceTransition {
                 source_identity: "post.md".into(),
-                source_path: "post.md".into(),
-                before_fingerprint: None,
-                after_fingerprint: Some("fingerprint".into()),
+                before: None,
+                after: Some(Snapshot {
+                    scope_id: "scope".into(),
+                    source_identity: "post.md".into(),
+                    source_path: "post.md".into(),
+                    title: Some("Post".into()),
+                    fingerprint: "fingerprint".into(),
+                    observed_at: "now".into(),
+                }),
             }],
         }
     }
