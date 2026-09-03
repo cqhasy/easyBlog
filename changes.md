@@ -2,6 +2,8 @@
 
 ## 2026-09-02
 
+- Added explicit publishing-target configuration for connected GitHub repositories. Authors now choose either the GitHub Pages or Astro content-collections adapter and persist article/resource directories without modifying the managed checkout. Initialization is separately previewed, requires confirmation on a clean workspace, and creates only missing adapter-owned paths; unconfigured targets cannot bind scopes, preview releases, or publish.
+
 - Hardened GitHub repository connection identity and checkout synchronization: repository names now persist and compare case-insensitively while preserving branch case, failed Target persistence removes its new managed clone, and ready workspaces synchronize only the configured default branch against `origin/<default-branch>`. GitHub authorization and repository reload requests now ignore stale responses and disable repeated reload while pending. The M2 plan now consistently uses one release batch per configured Scope. Shared Git subprocess timeouts, termination, and reaping are tracked separately in #38.
 
 - Hardened GitHub target connection idempotency and feedback: requests for the same repository and branch now serialize in-process, so a concurrent repeat waits and reuses the first successful Target rather than creating a second managed clone. The connection UI now immediately shows preparation progress and disables duplicate submission, repository changes, and reload while Git is working.

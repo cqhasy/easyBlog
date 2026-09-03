@@ -1,8 +1,13 @@
 use std::{collections::BTreeMap, path::PathBuf};
 
+use chrono::Utc;
+
 use crate::content::{Article, ResourceReference};
 
-use super::layout::{LayoutError, PagesLayout};
+use super::{
+    layout::{LayoutError, PagesLayout},
+    PublishingAdapter,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RenderedArticle {
@@ -25,12 +30,13 @@ pub enum TemplateError {
 }
 
 pub struct Template {
+    adapter: PublishingAdapter,
     layout: PagesLayout,
 }
 
 impl Template {
-    pub fn new(layout: PagesLayout) -> Self {
-        Self { layout }
+    pub fn new(adapter: PublishingAdapter, layout: PagesLayout) -> Self {
+        Self { adapter, layout }
     }
 
     pub fn render_article(&self, article: &Article) -> Result<RenderedArticle, TemplateError> {
@@ -44,11 +50,16 @@ impl Template {
         let mut metadata = article.metadata.clone();
         metadata.insert("title".into(), title.into());
         metadata.insert("slug".into(), slug.clone());
+        if self.adapter == PublishingAdapter::AstroContent {
+            metadata
+                .entry("published".into())
+                .or_insert_with(|| Utc::now().date_naive().to_string());
+        }
 
         Ok(RenderedArticle {
             path: self.layout.article_path(&slug),
             slug,
-            markdown: render_markdown(&metadata, article.markdown.as_str()),
+            markdown: render_markdown(&self.adapter, &metadata, article.markdown.as_str()),
         })
     }
 
@@ -71,15 +82,20 @@ impl Template {
             .collect()
     }
 
-    pub fn configuration(&self) -> String {
-        "adapter: github_pages\nposts_directory: _posts\nresources_directory: assets/easyblog\n"
-            .into()
+    pub fn configuration(&self) -> Option<String> {
+        self.adapter.configuration_path().map(|_| {
+            format!(
+                "adapter: github_pages\nposts_directory: {}\nresources_directory: {}\n",
+                self.layout.posts_directory.display(),
+                self.layout.resources_directory.display()
+            )
+        })
     }
 }
 
 impl Default for Template {
     fn default() -> Self {
-        Self::new(PagesLayout::default())
+        Self::new(PublishingAdapter::GithubPages, PagesLayout::default())
     }
 }
 
@@ -100,13 +116,26 @@ pub fn slug(input: &str) -> Option<String> {
     (!output.is_empty()).then_some(output)
 }
 
-fn render_markdown(metadata: &BTreeMap<String, String>, body: &str) -> String {
+fn render_markdown(
+    adapter: &PublishingAdapter,
+    metadata: &BTreeMap<String, String>,
+    body: &str,
+) -> String {
     let mut output = String::from("---\n");
     for (key, value) in metadata {
         output.push_str(key);
-        output.push_str(": \"");
-        output.push_str(&escape_yaml(value));
-        output.push_str("\"\n");
+        output.push_str(": ");
+        if adapter == &PublishingAdapter::AstroContent
+            && matches!(key.as_str(), "published" | "updated")
+            && is_iso_date(value)
+        {
+            output.push_str(value);
+        } else {
+            output.push('"');
+            output.push_str(&escape_yaml(value));
+            output.push('"');
+        }
+        output.push('\n');
     }
     output.push_str("---\n");
     output.push_str(body);
@@ -115,6 +144,10 @@ fn render_markdown(metadata: &BTreeMap<String, String>, body: &str) -> String {
 
 fn escape_yaml(value: &str) -> String {
     value.replace('\\', "\\\\").replace('"', "\\\"")
+}
+
+fn is_iso_date(value: &str) -> bool {
+    chrono::NaiveDate::parse_from_str(value, "%Y-%m-%d").is_ok()
 }
 
 #[cfg(test)]
@@ -160,7 +193,33 @@ mod tests {
     fn generates_non_sensitive_configuration() {
         assert_eq!(
             Template::default().configuration(),
-            "adapter: github_pages\nposts_directory: _posts\nresources_directory: assets/easyblog\n"
+            Some("adapter: github_pages\nposts_directory: _posts\nresources_directory: assets/easyblog\n".into())
         );
+    }
+
+    #[test]
+    fn adds_the_required_astro_published_date_without_changing_existing_dates() {
+        let article = normalize_local_markdown("cobra.md", "# Cobra\n").unwrap();
+        let template = Template::new(
+            PublishingAdapter::AstroContent,
+            PublishingAdapter::AstroContent.default_layout(),
+        );
+        let rendered = template.render_article(&article).unwrap();
+        let published = Utc::now().date_naive();
+
+        assert_eq!(rendered.path, PathBuf::from("src/content/posts/cobra.md"));
+        assert!(rendered
+            .markdown
+            .contains(&format!("published: {published}\n")));
+
+        let dated = normalize_local_markdown(
+            "dated.md",
+            "---\npublished: 2026-09-02\nupdated: 2026-09-03\n---\n# Dated\n",
+        )
+        .unwrap();
+        let rendered = template.render_article(&dated).unwrap();
+        assert!(rendered.markdown.contains("published: 2026-09-02\n"));
+        assert!(rendered.markdown.contains("updated: 2026-09-03\n"));
+        assert!(!rendered.markdown.contains("published: \"2026-09-02\""));
     }
 }

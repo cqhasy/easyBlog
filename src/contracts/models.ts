@@ -16,7 +16,8 @@ export interface Target {
   default_branch: string;
   visibility: "public" | "private";
   state: "ready" | "needs_configuration" | "needs_recovery" | "needs_reconnect";
-  layout?: { posts_directory: string; resources_directory: string };
+  adapter?: "github_pages" | "astro_content";
+  layout: { posts_directory: string; resources_directory: string };
 }
 export interface ConnectedTarget extends Target {
   name: string;
@@ -27,6 +28,17 @@ export interface GithubRepository {
   visibility: "public" | "private";
   default_branch: string;
   description: string | null;
+}
+export interface LayoutCandidate {
+  adapter: "github_pages" | "astro_content";
+  posts_directory: string;
+  resources_directory: string;
+  reason: string;
+  requires_initialization: boolean;
+}
+export interface InitializationPreview {
+  target_id: TargetId;
+  files: string[];
 }
 export interface ReleaseBatch {
   id: ReleaseBatchId;

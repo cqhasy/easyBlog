@@ -69,6 +69,7 @@ pub fn initialize(connection: &Connection) -> Result<()> {
            target_id TEXT NOT NULL,
            commit_sha TEXT NOT NULL,
            change_ids TEXT NOT NULL,
+           snapshots_before_publish TEXT,
            state TEXT NOT NULL,
            published_at TEXT,
            rollback_commit_sha TEXT,
@@ -77,7 +78,9 @@ pub fn initialize(connection: &Connection) -> Result<()> {
          CREATE INDEX IF NOT EXISTS publications_by_scope ON publications(scope_id, published_at DESC);",
     )?;
     migrate_target_metadata(connection)?;
-    migrate_publication_states(connection)
+    migrate_publication_states(connection)?;
+    migrate_publication_snapshots(connection)?;
+    migrate_release_ledger(connection)
 }
 
 fn migrate_target_metadata(connection: &Connection) -> Result<()> {
@@ -90,6 +93,7 @@ fn migrate_target_metadata(connection: &Connection) -> Result<()> {
         ("default_branch", "TEXT"),
         ("visibility", "TEXT"),
         ("target_state", "TEXT"),
+        ("adapter", "TEXT"),
     ] {
         if !columns.iter().any(|column| column == name) {
             connection.execute(

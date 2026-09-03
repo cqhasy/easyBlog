@@ -48,6 +48,9 @@ pub fn execute(
         .list(&scope.id)
         .map_err(|_| AppError::new("storage_error", "Changes could not be loaded"))?;
     let selected = preview_release::select_pending_changes(&available, &input.change_ids)?;
+    let baseline_before_publish = changes
+        .list_snapshots(&scope.id)
+        .map_err(|_| AppError::new("storage_error", "Snapshots could not be loaded"))?;
     preview_release::validate_publishable_source(&source)?;
     let checkout = Checkout::acquire(&input.target)
         .map_err(|_| AppError::new("target_unavailable", "The publishing target is not ready"))?;
@@ -62,6 +65,7 @@ pub fn execute(
             target_id: input.target.id.clone(),
             commit_sha: commit_sha.clone(),
             change_ids: input.change_ids.clone(),
+            snapshots_before_publish: Some(baseline_before_publish.clone()),
             state: PublicationState::PendingPush,
             published_at: None,
             rollback_commit_sha: None,
@@ -69,9 +73,7 @@ pub fn execute(
         })
         .map_err(|_| AppError::new("storage_error", "Release history could not be saved"))?;
     push::execute(checkout.root())?;
-    let mut baseline = changes
-        .list_snapshots(&scope.id)
-        .map_err(|_| AppError::new("storage_error", "Snapshots could not be loaded"))?;
+    let mut baseline = baseline_before_publish;
     baseline.retain(|snapshot| {
         !selected.iter().any(|change| {
             matches!(change.kind, ChangeKind::Deleted)
@@ -102,9 +104,12 @@ mod tests {
 
     use crate::{
         changes::change::{Change, ChangeKind},
-        scopes::scope::{Scope, ScopeLifecycle},
+        scopes::scope::{Scope, ScopeLifecycle, ScopeSelection, SourceNodeRef},
         sources::source::Source,
-        storage::{changes::ChangeRepository, scopes::ScopeRepository, sources::SourceRepository},
+        storage::{
+            changes::ChangeRepository, scopes::ScopeRepository, snapshots::SnapshotRepository,
+            sources::SourceRepository,
+        },
     };
 
     use super::*;
@@ -159,6 +164,7 @@ mod tests {
         let sources = SourceRepository::open(&database).unwrap();
         let scopes = ScopeRepository::open(&database).unwrap();
         let changes = ChangeRepository::open(&database).unwrap();
+        let snapshots = SnapshotRepository::open(&database).unwrap();
         sources
             .insert(&Source {
                 id: "source".into(),
@@ -177,7 +183,14 @@ mod tests {
                     name: "Posts".into(),
                     lifecycle: ScopeLifecycle::Active,
                     revision: 1,
-                    selections: vec![],
+                    selections: vec![ScopeSelection {
+                        node: SourceNodeRef {
+                            kind: "local_path".into(),
+                            value: ".".into(),
+                        },
+                        recursive: true,
+                        display_name: "Content".into(),
+                    }],
                     include_patterns: vec![],
                     exclude_patterns: vec![],
                     created_at: "now".into(),
@@ -221,7 +234,11 @@ mod tests {
             &publications,
             PublishReleaseInput {
                 scope_id: "scope".into(),
-                target: Target::new("target", &target_root),
+                target: Target {
+                    state: crate::targets::TargetState::Ready,
+                    adapter: Some(crate::targets::PublishingAdapter::GithubPages),
+                    ..Target::new("target", &target_root)
+                },
                 change_ids: vec!["change".into()],
             },
         )
@@ -253,6 +270,29 @@ mod tests {
         assert!(remote_post.status.success());
         assert!(String::from_utf8_lossy(&remote_post.stdout).contains("title: \"Hello\""));
 
+        crate::actions::rollback_publication::execute(
+            &changes,
+            &publications,
+            &publication.batch_id,
+            &Target {
+                state: crate::targets::TargetState::Ready,
+                adapter: Some(crate::targets::PublishingAdapter::GithubPages),
+                ..Target::new("target", &target_root)
+            },
+        )
+        .unwrap();
+        let rescanned = crate::actions::scan_scope::execute(
+            &sources,
+            &scopes,
+            &snapshots,
+            &changes,
+            "scope".into(),
+        )
+        .unwrap();
+        assert_eq!(rescanned.changes.len(), 1);
+        assert_eq!(rescanned.changes[0].kind, ChangeKind::Added);
+
+        drop(snapshots);
         drop(changes);
         drop(publications);
         drop(scopes);

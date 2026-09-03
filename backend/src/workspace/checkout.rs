@@ -32,7 +32,7 @@ impl Checkout {
         }
         let lock = FileLock::acquire(target.path()).map_err(CheckoutError::Lock)?;
         WorkingTree::require_clean(target.path()).map_err(CheckoutError::WorkingTree)?;
-        if target.state == TargetState::Ready {
+        if target.state == TargetState::Ready && !target.default_branch.is_empty() {
             synchronize(target.path(), &target.default_branch)?;
         }
         WorkingTree::require_clean(target.path()).map_err(CheckoutError::WorkingTree)?;

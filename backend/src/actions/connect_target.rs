@@ -73,6 +73,7 @@ pub fn execute(
         visibility: input.visibility,
         // Connecting a repository must not guess its publishing adapter or content paths.
         state: TargetState::NeedsConfiguration,
+        adapter: None,
         layout: Default::default(),
     };
     let connected = ConnectedTarget {

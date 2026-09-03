@@ -9,7 +9,7 @@ use crate::{
     shared::errors::{AppError, AppResult},
     sources::source::Source,
     storage::{changes::ChangeRepository, scopes::ScopeRepository, sources::SourceRepository},
-    targets::{Target, Template},
+    targets::{Target, TargetState, Template},
     workspace::Checkout,
 };
 
@@ -30,6 +30,12 @@ pub fn execute(
         .map_err(|_| AppError::new("storage_error", "Scope could not be loaded"))?
         .ok_or_else(|| AppError::new("scope_not_found", "Scope no longer exists"))?;
     validate_scope_target(&scope, &input.target)?;
+    if input.target.state != TargetState::Ready || input.target.adapter.is_none() {
+        return Err(AppError::new(
+            "target_needs_configuration",
+            "Configure this publishing target before previewing a release",
+        ));
+    }
     let available = changes
         .list(&scope.id)
         .map_err(|_| AppError::new("storage_error", "Changes could not be loaded"))?;
@@ -41,25 +47,13 @@ pub fn execute(
     validate_publishable_source(&source)?;
     let checkout = Checkout::acquire(&input.target).map_err(checkout_error)?;
     let files = build_file_set(&source.path, &input.target, &selected)?;
-    let needs_configuration = matches!(
-        crate::targets::check(&input.target),
-        crate::targets::TargetCheck::Ready {
-            needs_configuration: true
-        }
-    );
     let batch = ReleaseBatch {
         id: uuid::Uuid::new_v4().to_string(),
         scope_id: scope.id,
         target_id: input.target.id.clone(),
         change_ids: input.change_ids,
     };
-    ReleasePlan::new(
-        batch.id.clone(),
-        batch,
-        needs_configuration,
-        &files,
-        checkout.root(),
-    )
+    ReleasePlan::new(batch.id.clone(), batch, false, &files, checkout.root())
 }
 
 pub(crate) fn validate_scope_target(scope: &Scope, target: &Target) -> AppResult<()> {
@@ -138,7 +132,15 @@ pub(crate) fn build_file_set(
 ) -> AppResult<FileSet> {
     let reader = LocalReader::new(source_root)
         .map_err(|_| AppError::new("not_readable", "Source directory cannot be read"))?;
-    let template = Template::new(target.layout.clone());
+    let template = Template::new(
+        target.adapter.clone().ok_or_else(|| {
+            AppError::new(
+                "target_needs_configuration",
+                "Configure this publishing target before previewing a release",
+            )
+        })?,
+        target.layout.clone(),
+    );
     let mut files = FileSet::default();
     for change in changes {
         if matches!(change.kind, ChangeKind::Deleted) {
@@ -206,20 +208,6 @@ pub(crate) fn build_file_set(
             )?;
         }
     }
-    if matches!(
-        crate::targets::check(target),
-        crate::targets::TargetCheck::Ready {
-            needs_configuration: true
-        }
-    ) {
-        insert(
-            &mut files,
-            PlannedFile {
-                path: ".github/easyblog.yml".into(),
-                contents: PlannedFileContents::Text(template.configuration()),
-            },
-        )?;
-    }
     Ok(files)
 }
 
@@ -274,12 +262,13 @@ mod tests {
     }
 
     #[test]
-    fn previews_rendered_articles_resources_and_first_publish_configuration_without_writing() {
+    fn previews_configured_articles_and_resources_without_writing() {
         let root = std::env::temp_dir().join(format!("easyblog-preview-{}", uuid::Uuid::new_v4()));
         let source_root = root.join("source");
         let target_root = root.join("target");
         fs::create_dir_all(source_root.join("media")).unwrap();
         fs::create_dir_all(target_root.join("_posts")).unwrap();
+        fs::create_dir_all(target_root.join("assets/easyblog")).unwrap();
         fs::write(
             source_root.join("hello.md"),
             "# Hello\n![cover](media/cover.png)\n",
@@ -344,7 +333,11 @@ mod tests {
             &changes,
             PreviewReleaseInput {
                 scope_id: "scope".into(),
-                target: Target::new("target", &target_root),
+                target: Target {
+                    state: TargetState::Ready,
+                    adapter: Some(crate::targets::PublishingAdapter::GithubPages),
+                    ..Target::new("target", &target_root)
+                },
                 change_ids: vec!["change".into()],
             },
         )
@@ -354,17 +347,13 @@ mod tests {
             plan.status,
             crate::releases::ReleasePreviewStatus::AwaitingConfirmation
         );
-        assert!(plan.needs_configuration);
+        assert!(!plan.needs_configuration);
         assert_eq!(
             plan.diffs
                 .iter()
                 .map(|diff| diff.path.to_string_lossy().replace('\\', "/"))
                 .collect::<Vec<_>>(),
-            vec![
-                ".github/easyblog.yml",
-                "_posts/hello.md",
-                "assets/easyblog/hello/cover.png"
-            ]
+            vec!["_posts/hello.md", "assets/easyblog/hello/cover.png"]
         );
         assert!(plan
             .diffs
@@ -374,7 +363,6 @@ mod tests {
             .diffs
             .iter()
             .any(|diff| diff.patch == "Binary file (3 bytes)\n"));
-        assert!(!target_root.join(".github/easyblog.yml").exists());
         assert!(!target_root.join("_posts/hello.md").exists());
         assert!(crate::workspace::WorkingTree::require_clean(&target_root).is_ok());
 

@@ -2,12 +2,16 @@ use chrono::{SecondsFormat, Utc};
 
 use crate::{
     shared::errors::{AppError, AppResult},
-    storage::publications::{PublicationRepository, PublicationState},
+    storage::{
+        changes::ChangeRepository,
+        publications::{PublicationRepository, PublicationState},
+    },
     targets::Target,
     workspace::Checkout,
 };
 
 pub fn execute(
+    changes: &ChangeRepository,
     publications: &PublicationRepository,
     batch_id: &str,
     target: &Target,
@@ -31,6 +35,15 @@ pub fn execute(
         return Err(AppError::new(
             "publication_not_reversible",
             "Only a published release can be rolled back",
+        ));
+    }
+    if !publications
+        .is_latest_reversible(&record)
+        .map_err(|_| AppError::new("storage_error", "Release history could not be loaded"))?
+    {
+        return Err(AppError::new(
+            "publication_not_latest",
+            "Only the latest published release for this scope can be rolled back",
         ));
     }
     let checkout = Checkout::acquire(target)
@@ -69,6 +82,14 @@ pub fn execute(
         rollback_sha
     };
     crate::releases::push::execute(checkout.root())?;
+    // Restore the last published baseline so the local source is detected as pending
+    // again on the next scan. Legacy records have no saved baseline, so reset it.
+    changes
+        .restore_rollback(
+            &record.scope_id,
+            record.snapshots_before_publish.as_deref().unwrap_or(&[]),
+        )
+        .map_err(|_| AppError::new("storage_error", "Rollback state could not be saved"))?;
     publications
         .mark_rolled_back(
             batch_id,

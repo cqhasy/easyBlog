@@ -15,6 +15,8 @@ pub struct Target {
     pub visibility: TargetVisibility,
     pub state: TargetState,
     #[serde(default)]
+    pub adapter: Option<PublishingAdapter>,
+    #[serde(default)]
     pub layout: PagesLayout,
 }
 
@@ -27,12 +29,46 @@ impl Target {
             default_branch: "".into(),
             visibility: TargetVisibility::Private,
             state: TargetState::NeedsReconnect,
+            adapter: None,
             layout: PagesLayout::default(),
         }
     }
 
     pub fn path(&self) -> &Path {
         &self.workspace_path
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PublishingAdapter {
+    GithubPages,
+    AstroContent,
+}
+
+impl PublishingAdapter {
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::GithubPages => "GitHub Pages",
+            Self::AstroContent => "Astro content collections",
+        }
+    }
+
+    pub fn default_layout(&self) -> PagesLayout {
+        match self {
+            Self::GithubPages => PagesLayout::default(),
+            Self::AstroContent => PagesLayout {
+                posts_directory: "src/content/posts".into(),
+                resources_directory: "src/assets/easyblog".into(),
+            },
+        }
+    }
+
+    pub fn configuration_path(&self) -> Option<&'static str> {
+        match self {
+            Self::GithubPages => Some(".github/easyblog.yml"),
+            Self::AstroContent => None,
+        }
     }
 }
 

@@ -45,9 +45,12 @@ pub fn execute(
     let checkout = Checkout::acquire(target)
         .map_err(|_| AppError::new("target_unavailable", "The publishing target is not ready"))?;
     crate::releases::push::execute(checkout.root())?;
-    let mut baseline = changes
-        .list_snapshots(&record.scope_id)
-        .map_err(|_| AppError::new("storage_error", "Snapshots could not be loaded"))?;
+    let mut baseline = match record.snapshots_before_publish.clone() {
+        Some(snapshots) => snapshots,
+        None => changes
+            .list_snapshots(&record.scope_id)
+            .map_err(|_| AppError::new("storage_error", "Snapshots could not be loaded"))?,
+    };
     baseline.retain(|snapshot| {
         !selected.iter().any(|change| {
             matches!(change.kind, ChangeKind::Deleted)
@@ -137,6 +140,7 @@ mod tests {
                 target_id: "target".into(),
                 commit_sha: "sha".into(),
                 change_ids: vec!["stale-change".into()],
+                snapshots_before_publish: Some(vec![]),
                 state: PublicationState::PendingPush,
                 published_at: None,
                 rollback_commit_sha: None,
