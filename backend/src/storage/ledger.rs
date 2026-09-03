@@ -165,6 +165,23 @@ impl LedgerRepository {
         ).optional()
     }
 
+    pub fn active_preview(&self, target_id: &str) -> Result<Option<LedgerBatch>> {
+        let connection = self
+            .connection
+            .lock()
+            .expect("ledger repository lock poisoned");
+        connection
+            .query_row(
+                "SELECT batches.batch_id, batches.scope_id, batches.target_id, batches.change_ids, batches.scope_revision, batches.target_sequence_before, batches.target_head_before, batches.state, batches.created_at, batches.previewed_at, batches.commit_sha, batches.published_at, batches.rollback_commit_sha, batches.rolled_back_at, batches.failure_code
+                 FROM target_revisions revisions
+                 JOIN release_batches batches ON batches.batch_id = revisions.active_batch_id
+                 WHERE revisions.target_id = ?1 AND batches.state = 'previewed'",
+                [target_id],
+                ledger_batch_row,
+            )
+            .optional()
+    }
+
     pub fn load_operations(&self, batch_id: &str) -> Result<Vec<LedgerOperation>> {
         let connection = self
             .connection
@@ -855,6 +872,33 @@ mod tests {
         drop(connection);
 
         assert!(ledger.load_source_transitions("batch").is_err());
+
+        drop(ledger);
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn persists_a_preview_after_migrating_legacy_source_transitions() {
+        let path = temp_db();
+        create_scope_and_target(&path);
+        let connection = Connection::open(&path).unwrap();
+        connection
+            .execute_batch(
+                "DROP TABLE release_source_transitions;
+                 CREATE TABLE release_source_transitions (
+                   batch_id TEXT NOT NULL REFERENCES release_batches(batch_id) ON DELETE CASCADE,
+                   source_identity TEXT NOT NULL,
+                   source_path TEXT NOT NULL,
+                   before_fingerprint TEXT,
+                   after_fingerprint TEXT,
+                   PRIMARY KEY (batch_id, source_identity)
+                 );",
+            )
+            .unwrap();
+        drop(connection);
+
+        let ledger = LedgerRepository::open(&path).unwrap();
+        ledger.create_preview(&preview()).unwrap();
 
         drop(ledger);
         std::fs::remove_file(path).unwrap();
