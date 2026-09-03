@@ -1,4 +1,8 @@
-use std::{fs, path::PathBuf};
+use std::{
+    fs,
+    io::{self, Write},
+    path::{Component, Path, PathBuf},
+};
 
 use serde::Serialize;
 
@@ -6,7 +10,7 @@ use crate::{
     shared::errors::{AppError, AppResult},
     storage::targets::{ConnectedTarget, TargetRepository},
     targets::{PagesLayout, PublishingAdapter, TargetCheck, TargetState},
-    workspace::WorkingTree,
+    workspace::{FileLock, WorkingTree},
 };
 
 pub struct ConfigureTargetInput {
@@ -120,6 +124,12 @@ pub fn preview_initialization(
 pub fn initialize(targets: &TargetRepository, target_id: &str) -> AppResult<ConnectedTarget> {
     let mut target = load(targets, target_id)?;
     validate_workspace(&target)?;
+    let _lock = FileLock::acquire(target.target.path()).map_err(|_| {
+        AppError::new(
+            "workspace_busy",
+            "Another target operation is already running",
+        )
+    })?;
     let adapter = target.target.adapter.clone().ok_or_else(|| {
         AppError::new(
             "target_needs_configuration",
@@ -129,51 +139,30 @@ pub fn initialize(targets: &TargetRepository, target_id: &str) -> AppResult<Conn
     validate_paths(&target.target.layout)?;
     WorkingTree::require_clean(target.target.path())
         .map_err(|_| AppError::new("workspace_dirty", "The target workspace has external edits"))?;
-    let posts_directory = target
-        .target
-        .path()
-        .join(&target.target.layout.posts_directory);
-    if !posts_directory.is_dir() {
-        fs::create_dir_all(posts_directory).map_err(|_| {
-            AppError::new(
-                "initialization_failed",
-                "Publishing directory could not be created",
-            )
-        })?;
-    }
-    let resources_directory = target
-        .target
-        .path()
-        .join(&target.target.layout.resources_directory);
-    if !resources_directory.is_dir() {
-        fs::create_dir_all(resources_directory).map_err(|_| {
-            AppError::new(
-                "initialization_failed",
-                "Resource directory could not be created",
-            )
-        })?;
-    }
+    create_safe_directory(
+        target.target.path(),
+        &target.target.layout.posts_directory,
+        "Publishing",
+    )?;
+    create_safe_directory(
+        target.target.path(),
+        &target.target.layout.resources_directory,
+        "Resource",
+    )?;
     if let Some(path) = adapter.configuration_path() {
-        let output = target.target.path().join(path);
-        if !output.is_file() {
+        let output = safe_path(target.target.path(), Path::new(path))?;
+        if !output.exists() {
             let configuration =
                 crate::targets::Template::new(adapter, target.target.layout.clone())
                     .configuration()
                     .expect("adapter owns configuration path");
-            if let Some(parent) = output.parent() {
-                fs::create_dir_all(parent).map_err(|_| {
-                    AppError::new(
-                        "initialization_failed",
-                        "Configuration directory could not be created",
-                    )
-                })?;
+            if let Some(parent) = Path::new(path)
+                .parent()
+                .filter(|parent| !parent.as_os_str().is_empty())
+            {
+                create_safe_directory(target.target.path(), parent, "Configuration")?;
             }
-            fs::write(output, configuration).map_err(|_| {
-                AppError::new(
-                    "initialization_failed",
-                    "Publishing configuration could not be written",
-                )
-            })?;
+            write_new_configuration(&output, &configuration)?;
         }
     }
     target.target.state = TargetState::Ready;
@@ -181,6 +170,101 @@ pub fn initialize(targets: &TargetRepository, target_id: &str) -> AppResult<Conn
         .update(&target)
         .map_err(|_| AppError::new("storage_error", "Publishing target could not be saved"))?;
     Ok(target)
+}
+
+fn safe_path(root: &Path, relative: &Path) -> AppResult<PathBuf> {
+    if relative.is_absolute()
+        || relative
+            .components()
+            .any(|component| !matches!(component, Component::Normal(_)))
+    {
+        return Err(AppError::new(
+            "invalid_layout_path",
+            "Publishing paths must remain inside the target workspace",
+        ));
+    }
+    let canonical_root = fs::canonicalize(root).map_err(|_| {
+        AppError::new(
+            "target_unavailable",
+            "The publishing target workspace is unavailable",
+        )
+    })?;
+    let output = canonical_root.join(relative);
+    let mut current = canonical_root;
+    for component in relative.components() {
+        let Component::Normal(component) = component else {
+            unreachable!()
+        };
+        current.push(component);
+        if current.exists()
+            && fs::symlink_metadata(&current)
+                .map_err(|_| initialization_error())?
+                .file_type()
+                .is_symlink()
+        {
+            return Err(AppError::new(
+                "unsafe_workspace_path",
+                "Publishing paths cannot traverse symbolic links",
+            ));
+        }
+    }
+    Ok(output)
+}
+
+fn create_safe_directory(root: &Path, relative: &Path, label: &str) -> AppResult<()> {
+    let output = safe_path(root, relative)?;
+    let canonical_root = fs::canonicalize(root).map_err(|_| initialization_error())?;
+    let mut current = canonical_root;
+    for component in relative.components() {
+        let Component::Normal(component) = component else {
+            unreachable!()
+        };
+        current.push(component);
+        match fs::symlink_metadata(&current) {
+            Ok(metadata) if metadata.file_type().is_symlink() => {
+                return Err(AppError::new(
+                    "unsafe_workspace_path",
+                    "Publishing paths cannot traverse symbolic links",
+                ));
+            }
+            Ok(metadata) if metadata.is_dir() => {}
+            Ok(_) => {
+                return Err(AppError::new(
+                    "initialization_failed",
+                    format!("{label} directory conflicts with an existing file"),
+                ))
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                fs::create_dir(&current).map_err(|_| initialization_error())?
+            }
+            Err(_) => return Err(initialization_error()),
+        }
+    }
+    debug_assert_eq!(output, current);
+    Ok(())
+}
+
+fn write_new_configuration(path: &Path, configuration: &str) -> AppResult<()> {
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)
+        .map_err(|error| match error.kind() {
+            io::ErrorKind::AlreadyExists => AppError::new(
+                "initialization_conflict",
+                "Publishing configuration was created by another operation",
+            ),
+            _ => initialization_error(),
+        })?;
+    file.write_all(configuration.as_bytes())
+        .map_err(|_| initialization_error())
+}
+
+fn initialization_error() -> AppError {
+    AppError::new(
+        "initialization_failed",
+        "Publishing target could not be initialized",
+    )
 }
 
 fn missing_initialization_files(
@@ -426,6 +510,50 @@ mod tests {
 
         drop(targets);
         fs::remove_dir_all(root).unwrap();
+        fs::remove_file(database).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rejects_initialization_through_a_symbolic_linked_directory() {
+        use std::os::unix::fs::symlink;
+
+        let root = std::env::temp_dir().join(format!(
+            "easyblog-configure-target-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let outside = std::env::temp_dir().join(format!(
+            "easyblog-configure-target-outside-{}",
+            uuid::Uuid::new_v4()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        fs::create_dir_all(&outside).unwrap();
+        git(&root, &["init"]);
+        symlink(&outside, root.join("linked")).unwrap();
+        let database = std::env::temp_dir().join(format!(
+            "easyblog-configure-target-{}.sqlite",
+            uuid::Uuid::new_v4()
+        ));
+        let targets = TargetRepository::open(&database).unwrap();
+        targets.insert(&connected(&root)).unwrap();
+        save(
+            &targets,
+            ConfigureTargetInput {
+                target_id: "target-1".into(),
+                adapter: PublishingAdapter::GithubPages,
+                posts_directory: "linked/posts".into(),
+                resources_directory: "assets/easyblog".into(),
+            },
+        )
+        .unwrap();
+
+        let error = initialize(&targets, "target-1").unwrap_err();
+        assert_eq!(error.code, "unsafe_workspace_path");
+        assert!(!outside.join("posts").exists());
+
+        drop(targets);
+        fs::remove_dir_all(root).unwrap();
+        fs::remove_dir_all(outside).unwrap();
         fs::remove_file(database).unwrap();
     }
 }

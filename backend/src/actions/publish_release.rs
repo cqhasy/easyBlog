@@ -7,6 +7,7 @@ use crate::{
     shared::errors::{AppError, AppResult},
     storage::{
         changes::ChangeRepository,
+        ledger::LedgerRepository,
         publications::{PublicationRecord, PublicationRepository, PublicationState},
         scopes::ScopeRepository,
         sources::SourceRepository,
@@ -16,9 +17,7 @@ use crate::{
 };
 
 pub struct PublishReleaseInput {
-    pub scope_id: String,
-    pub target: Target,
-    pub change_ids: Vec<String>,
+    pub batch_id: String,
 }
 
 #[derive(Debug, serde::Serialize)]
@@ -32,14 +31,26 @@ pub fn execute(
     sources: &SourceRepository,
     scopes: &ScopeRepository,
     changes: &ChangeRepository,
+    ledger: &LedgerRepository,
     publications: &PublicationRepository,
+    target: Target,
     input: PublishReleaseInput,
 ) -> AppResult<Publication> {
+    let batch = ledger
+        .load_batch(&input.batch_id)
+        .map_err(|_| AppError::new("storage_error", "Release batch could not be loaded"))?
+        .ok_or_else(|| AppError::new("release_not_found", "Release preview no longer exists"))?;
+    if batch.state != crate::releases::BatchState::Previewed {
+        return Err(AppError::new(
+            "release_not_publishable",
+            "This release preview can no longer be confirmed",
+        ));
+    }
     let scope = scopes
-        .get(&input.scope_id)
+        .get(&batch.scope_id)
         .map_err(|_| AppError::new("storage_error", "Scope could not be loaded"))?
         .ok_or_else(|| AppError::new("scope_not_found", "Scope no longer exists"))?;
-    preview_release::validate_scope_target(&scope, &input.target)?;
+    preview_release::validate_scope_target(&scope, &target)?;
     let source = sources
         .get(&scope.source_id)
         .map_err(|_| AppError::new("storage_error", "Source could not be loaded"))?
@@ -47,30 +58,86 @@ pub fn execute(
     let available = changes
         .list(&scope.id)
         .map_err(|_| AppError::new("storage_error", "Changes could not be loaded"))?;
-    let selected = preview_release::select_pending_changes(&available, &input.change_ids)?;
+    let selected = preview_release::select_pending_changes(&available, &batch.change_ids)?;
     let baseline_before_publish = changes
         .list_snapshots(&scope.id)
         .map_err(|_| AppError::new("storage_error", "Snapshots could not be loaded"))?;
     preview_release::validate_publishable_source(&source)?;
-    let checkout = Checkout::acquire(&input.target).map_err(preview_release::checkout_error)?;
-    let files = preview_release::build_file_set(&source.path, &input.target, &selected)?;
-    stage::apply(checkout.root(), &files)?;
-    let commit_sha = commit::create(checkout.root(), "Publish easyBlog release")?;
-    let batch_id = uuid::Uuid::new_v4().to_string();
+    let checkout = Checkout::acquire(&target).map_err(preview_release::checkout_error)?;
+    if scope.revision != batch.scope_revision
+        || crate::providers::git::GitCommands::commit_sha(checkout.root()).map_err(|_| {
+            AppError::new("target_unavailable", "The target workspace is unavailable")
+        })? != batch.target_head_before
+    {
+        return Err(AppError::new(
+            "release_preview_invalidated",
+            "The source scope or target changed after preview",
+        ));
+    }
+    let transitions = ledger
+        .load_source_transitions(&batch.id)
+        .map_err(|_| AppError::new("storage_error", "Release preview could not be validated"))?;
+    if selected.iter().any(|change| {
+        transitions
+            .iter()
+            .find(|transition| transition.source_identity == change.source_identity)
+            .is_none_or(|transition| {
+                transition.after_fingerprint
+                    != change
+                        .snapshot
+                        .as_ref()
+                        .map(|snapshot| snapshot.fingerprint.clone())
+            })
+    }) {
+        return Err(AppError::new(
+            "release_preview_invalidated",
+            "Selected source content changed after preview",
+        ));
+    }
+    let files = preview_release::build_file_set(&source.path, &target, &selected)?;
+    if !ledger
+        .begin_publish(&batch.id)
+        .map_err(|_| AppError::new("storage_error", "Release preview could not be claimed"))?
+    {
+        return Err(AppError::new(
+            "release_not_publishable",
+            "This release preview is already being handled",
+        ));
+    }
+    if let Err(error) = stage::apply(checkout.root(), &files) {
+        let _ = ledger.mark_recovery_required(&batch.id, "workspace_write_failed");
+        return Err(error);
+    }
+    let commit_sha = match commit::create(checkout.root(), "Publish easyBlog release") {
+        Ok(commit_sha) => commit_sha,
+        Err(error) => {
+            let _ = ledger.mark_recovery_required(&batch.id, "git_commit_failed");
+            return Err(error);
+        }
+    };
     publications
         .insert_pending(&PublicationRecord {
-            batch_id: batch_id.clone(),
+            batch_id: batch.id.clone(),
             scope_id: scope.id.clone(),
-            target_id: input.target.id.clone(),
+            target_id: target.id.clone(),
             commit_sha: commit_sha.clone(),
-            change_ids: input.change_ids.clone(),
+            change_ids: batch.change_ids.clone(),
             snapshots_before_publish: Some(baseline_before_publish.clone()),
             state: PublicationState::PendingPush,
             published_at: None,
             rollback_commit_sha: None,
             rolled_back_at: None,
         })
-        .map_err(|_| AppError::new("storage_error", "Release history could not be saved"))?;
+        .map_err(|_| {
+            let _ = ledger.mark_recovery_required(&batch.id, "publication_history_write_failed");
+            AppError::new("storage_error", "Release history could not be saved")
+        })?;
+    ledger
+        .mark_pending_push(&batch.id, &commit_sha)
+        .map_err(|_| {
+            let _ = ledger.mark_recovery_required(&batch.id, "release_commit_record_failed");
+            AppError::new("storage_error", "Release commit could not be recorded")
+        })?;
     push::execute(checkout.root())?;
     let mut baseline = baseline_before_publish;
     baseline.retain(|snapshot| {
@@ -84,14 +151,17 @@ pub fn execute(
         baseline.push(snapshot);
     }
     changes
-        .apply_publication(&scope.id, &baseline, &input.change_ids)
+        .apply_publication(&scope.id, &baseline, &batch.change_ids)
         .map_err(|_| AppError::new("storage_error", "Published state could not be saved"))?;
     let published_at = Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true);
     publications
-        .mark_published(&batch_id, &published_at)
+        .mark_published(&batch.id, &published_at)
         .map_err(|_| AppError::new("storage_error", "Release history could not be updated"))?;
+    ledger
+        .finalize_publish(&batch.id, &commit_sha, &published_at)
+        .map_err(|_| AppError::new("storage_error", "Release ledger could not be finalized"))?;
     Ok(Publication {
-        batch_id,
+        batch_id: batch.id,
         commit_sha,
         published_at,
     })
@@ -106,8 +176,11 @@ mod tests {
         scopes::scope::{Scope, ScopeLifecycle, ScopeSelection, SourceNodeRef},
         sources::source::Source,
         storage::{
-            changes::ChangeRepository, scopes::ScopeRepository, snapshots::SnapshotRepository,
+            changes::ChangeRepository,
+            scopes::ScopeRepository,
+            snapshots::SnapshotRepository,
             sources::SourceRepository,
+            targets::{ConnectedTarget, TargetRepository},
         },
     };
 
@@ -226,19 +299,41 @@ mod tests {
 
         let publications =
             crate::storage::publications::PublicationRepository::open(&database).unwrap();
+        let ledger = crate::storage::ledger::LedgerRepository::open(&database).unwrap();
+        let target = Target {
+            state: crate::targets::TargetState::Ready,
+            adapter: Some(crate::targets::PublishingAdapter::GithubPages),
+            ..Target::new("target", &target_root)
+        };
+        let targets = TargetRepository::open(&database).unwrap();
+        targets
+            .insert(&ConnectedTarget {
+                target: target.clone(),
+                name: "Target".into(),
+                created_at: "now".into(),
+            })
+            .unwrap();
+        let plan = crate::actions::preview_release::execute(
+            &sources,
+            &scopes,
+            &changes,
+            &ledger,
+            crate::actions::preview_release::PreviewReleaseInput {
+                scope_id: "scope".into(),
+                target: target.clone(),
+                change_ids: vec!["change".into()],
+            },
+        )
+        .unwrap();
         let publication = execute(
             &sources,
             &scopes,
             &changes,
+            &ledger,
             &publications,
+            target.clone(),
             PublishReleaseInput {
-                scope_id: "scope".into(),
-                target: Target {
-                    state: crate::targets::TargetState::Ready,
-                    adapter: Some(crate::targets::PublishingAdapter::GithubPages),
-                    ..Target::new("target", &target_root)
-                },
-                change_ids: vec!["change".into()],
+                batch_id: plan.batch.id,
             },
         )
         .unwrap();
@@ -273,11 +368,7 @@ mod tests {
             &changes,
             &publications,
             &publication.batch_id,
-            &Target {
-                state: crate::targets::TargetState::Ready,
-                adapter: Some(crate::targets::PublishingAdapter::GithubPages),
-                ..Target::new("target", &target_root)
-            },
+            &target,
         )
         .unwrap();
         let rescanned = crate::actions::scan_scope::execute(
@@ -294,13 +385,15 @@ mod tests {
         drop(snapshots);
         drop(changes);
         drop(publications);
+        drop(ledger);
+        drop(targets);
         drop(scopes);
         drop(sources);
         fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
-    fn rejects_a_target_that_is_not_bound_to_the_scope_before_publishing() {
+    fn rejects_a_missing_release_batch_before_resolving_a_target() {
         let root =
             std::env::temp_dir().join(format!("easyblog-publish-target-{}", uuid::Uuid::new_v4()));
         fs::create_dir_all(&root).unwrap();
@@ -310,6 +403,7 @@ mod tests {
         let changes = ChangeRepository::open(&database).unwrap();
         let publications =
             crate::storage::publications::PublicationRepository::open(&database).unwrap();
+        let ledger = crate::storage::ledger::LedgerRepository::open(&database).unwrap();
         sources
             .insert(&Source {
                 id: "source".into(),
@@ -342,17 +436,18 @@ mod tests {
             &sources,
             &scopes,
             &changes,
+            &ledger,
             &publications,
+            Target::new("other-target", root.join("other-target")),
             PublishReleaseInput {
-                scope_id: "scope".into(),
-                target: Target::new("other-target", root.join("other-target")),
-                change_ids: vec!["change".into()],
+                batch_id: "missing".into(),
             },
         )
         .unwrap_err();
 
-        assert_eq!(error.code, "target_mismatch");
+        assert_eq!(error.code, "release_not_found");
         drop(publications);
+        drop(ledger);
         drop(changes);
         drop(scopes);
         drop(sources);

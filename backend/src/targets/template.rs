@@ -85,9 +85,9 @@ impl Template {
     pub fn configuration(&self) -> Option<String> {
         self.adapter.configuration_path().map(|_| {
             format!(
-                "adapter: github_pages\nposts_directory: {}\nresources_directory: {}\n",
-                self.layout.posts_directory.display(),
-                self.layout.resources_directory.display()
+                "adapter: github_pages\nposts_directory: \"{}\"\nresources_directory: \"{}\"\n",
+                escape_yaml(&self.layout.posts_directory.to_string_lossy()),
+                escape_yaml(&self.layout.resources_directory.to_string_lossy())
             )
         })
     }
@@ -143,7 +143,11 @@ fn render_markdown(
 }
 
 fn escape_yaml(value: &str) -> String {
-    value.replace('\\', "\\\\").replace('"', "\\\"")
+    value
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('\n', "\\n")
+        .replace('\r', "\\r")
 }
 
 fn is_iso_date(value: &str) -> bool {
@@ -193,7 +197,25 @@ mod tests {
     fn generates_non_sensitive_configuration() {
         assert_eq!(
             Template::default().configuration(),
-            Some("adapter: github_pages\nposts_directory: _posts\nresources_directory: assets/easyblog\n".into())
+            Some("adapter: github_pages\nposts_directory: \"_posts\"\nresources_directory: \"assets/easyblog\"\n".into())
+        );
+    }
+
+    #[test]
+    fn serializes_configuration_directories_as_yaml_scalars() {
+        let template = Template::new(
+            PublishingAdapter::GithubPages,
+            PagesLayout {
+                posts_directory: "posts # archive".into(),
+                resources_directory: "assets: public\nimages".into(),
+            },
+        );
+
+        assert_eq!(
+            template.configuration(),
+            Some(
+                "adapter: github_pages\nposts_directory: \"posts # archive\"\nresources_directory: \"assets: public\\nimages\"\n".into()
+            )
         );
     }
 

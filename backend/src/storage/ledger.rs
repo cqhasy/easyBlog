@@ -12,6 +12,7 @@ pub struct LedgerBatch {
     pub id: String,
     pub scope_id: String,
     pub target_id: String,
+    pub change_ids: Vec<String>,
     pub scope_revision: i64,
     pub target_sequence_before: i64,
     pub target_head_before: String,
@@ -85,7 +86,9 @@ impl LedgerRepository {
             "INSERT INTO target_revisions (target_id, sequence, head_sha, active_batch_id)
              VALUES (?1, ?2, ?3, ?4)
              ON CONFLICT(target_id) DO UPDATE SET active_batch_id = excluded.active_batch_id
-             WHERE target_revisions.active_batch_id IS NULL",
+             WHERE target_revisions.active_batch_id IS NULL
+               AND target_revisions.sequence = excluded.sequence
+               AND target_revisions.head_sha = excluded.head_sha",
             params![
                 preview.batch.target_id,
                 preview.batch.target_sequence_before,
@@ -97,9 +100,9 @@ impl LedgerRepository {
             return Err(rusqlite::Error::InvalidQuery);
         }
         transaction.execute(
-            "INSERT INTO release_batches (batch_id, scope_id, target_id, scope_revision, target_sequence_before, target_head_before, state, created_at, previewed_at, commit_sha, published_at, rollback_commit_sha, rolled_back_at, failure_code)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, NULL, NULL, NULL, NULL, NULL)",
-            params![preview.batch.id, preview.batch.scope_id, preview.batch.target_id, preview.batch.scope_revision, preview.batch.target_sequence_before, preview.batch.target_head_before, batch_state_name(preview.batch.state), preview.batch.created_at, preview.batch.previewed_at],
+            "INSERT INTO release_batches (batch_id, scope_id, target_id, change_ids, scope_revision, target_sequence_before, target_head_before, state, created_at, previewed_at, commit_sha, published_at, rollback_commit_sha, rolled_back_at, failure_code)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, NULL, NULL, NULL, NULL, NULL)",
+            params![preview.batch.id, preview.batch.scope_id, preview.batch.target_id, serde_json::to_string(&preview.batch.change_ids).unwrap(), preview.batch.scope_revision, preview.batch.target_sequence_before, preview.batch.target_head_before, batch_state_name(preview.batch.state), preview.batch.created_at, preview.batch.previewed_at],
         )?;
         for binding in &preview.bindings {
             transaction.execute(
@@ -150,15 +153,15 @@ impl LedgerRepository {
             .lock()
             .expect("ledger repository lock poisoned");
         let batch = connection
-            .query_row("SELECT batch_id, scope_id, target_id, scope_revision, target_sequence_before, target_head_before, state, created_at, previewed_at, commit_sha, published_at, rollback_commit_sha, rolled_back_at, failure_code FROM release_batches WHERE batch_id = ?1", [batch_id], ledger_batch_row)
+            .query_row("SELECT batch_id, scope_id, target_id, change_ids, scope_revision, target_sequence_before, target_head_before, state, created_at, previewed_at, commit_sha, published_at, rollback_commit_sha, rolled_back_at, failure_code FROM release_batches WHERE batch_id = ?1", [batch_id], ledger_batch_row)
             .optional()?;
         if batch.is_some() {
             return Ok(batch);
         }
         connection.query_row(
-            "SELECT batch_id, scope_id, target_id, commit_sha, published_at, rollback_commit_sha, rolled_back_at FROM publications WHERE batch_id = ?1",
+            "SELECT batch_id, scope_id, target_id, commit_sha, change_ids, published_at, rollback_commit_sha, rolled_back_at FROM publications WHERE batch_id = ?1",
             [batch_id],
-            |row| Ok(LedgerBatch { id: row.get(0)?, scope_id: row.get(1)?, target_id: row.get(2)?, scope_revision: 0, target_sequence_before: 0, target_head_before: String::new(), state: BatchState::Legacy, created_at: row.get::<_, Option<String>>(4)?.unwrap_or_default(), previewed_at: None, commit_sha: Some(row.get(3)?), published_at: row.get(4)?, rollback_commit_sha: row.get(5)?, rolled_back_at: row.get(6)?, failure_code: None }),
+            |row| Ok(LedgerBatch { id: row.get(0)?, scope_id: row.get(1)?, target_id: row.get(2)?, change_ids: serde_json::from_str(&row.get::<_, String>(4)?).unwrap_or_default(), scope_revision: 0, target_sequence_before: 0, target_head_before: String::new(), state: BatchState::Legacy, created_at: row.get::<_, Option<String>>(5)?.unwrap_or_default(), previewed_at: None, commit_sha: Some(row.get(3)?), published_at: row.get(5)?, rollback_commit_sha: row.get(6)?, rolled_back_at: row.get(7)?, failure_code: None }),
         ).optional()
     }
 
@@ -172,6 +175,47 @@ impl LedgerRepository {
             .query_map([batch_id], operation_row)?
             .collect::<Result<Vec<_>>>()?;
         Ok(operations)
+    }
+
+    pub fn load_source_transitions(&self, batch_id: &str) -> Result<Vec<SourceTransition>> {
+        let connection = self
+            .connection
+            .lock()
+            .expect("ledger repository lock poisoned");
+        let mut statement = connection.prepare("SELECT source_identity, source_path, before_fingerprint, after_fingerprint FROM release_source_transitions WHERE batch_id = ?1 ORDER BY source_identity")?;
+        let transitions = statement
+            .query_map([batch_id], |row| {
+                Ok(SourceTransition {
+                    source_identity: row.get(0)?,
+                    source_path: row.get(1)?,
+                    before_fingerprint: row.get(2)?,
+                    after_fingerprint: row.get(3)?,
+                })
+            })?
+            .collect::<Result<Vec<_>>>()?;
+        Ok(transitions)
+    }
+
+    pub fn begin_publish(&self, batch_id: &str) -> Result<bool> {
+        let connection = self
+            .connection
+            .lock()
+            .expect("ledger repository lock poisoned");
+        Ok(connection.execute(
+            "UPDATE release_batches SET state = 'committing' WHERE batch_id = ?1 AND state = 'previewed' AND EXISTS (SELECT 1 FROM target_revisions WHERE target_revisions.target_id = release_batches.target_id AND target_revisions.active_batch_id = release_batches.batch_id)",
+            [batch_id],
+        )? == 1)
+    }
+
+    pub fn mark_pending_push(&self, batch_id: &str, commit_sha: &str) -> Result<()> {
+        let connection = self
+            .connection
+            .lock()
+            .expect("ledger repository lock poisoned");
+        if connection.execute("UPDATE release_batches SET state = 'pending_push', commit_sha = ?2 WHERE batch_id = ?1 AND state = 'committing'", params![batch_id, commit_sha])? != 1 {
+            return Err(rusqlite::Error::InvalidQuery);
+        }
+        Ok(())
     }
 
     pub fn acquire_target_mutation(&self, target_id: &str, batch_id: &str) -> Result<bool> {
@@ -249,7 +293,7 @@ impl LedgerRepository {
             .lock()
             .expect("ledger repository lock poisoned");
         let transaction = connection.transaction()?;
-        let batch = transaction.query_row("SELECT batch_id, scope_id, target_id, scope_revision, target_sequence_before, target_head_before, state, created_at, previewed_at, commit_sha, published_at, rollback_commit_sha, rolled_back_at, failure_code FROM release_batches WHERE batch_id = ?1", [batch_id], ledger_batch_row)?;
+        let batch = transaction.query_row("SELECT batch_id, scope_id, target_id, change_ids, scope_revision, target_sequence_before, target_head_before, state, created_at, previewed_at, commit_sha, published_at, rollback_commit_sha, rolled_back_at, failure_code FROM release_batches WHERE batch_id = ?1", [batch_id], ledger_batch_row)?;
         if batch.state != expected && batch.state != next {
             return Err(rusqlite::Error::InvalidQuery);
         }
@@ -295,17 +339,18 @@ fn ledger_batch_row(row: &rusqlite::Row<'_>) -> Result<LedgerBatch> {
         id: row.get(0)?,
         scope_id: row.get(1)?,
         target_id: row.get(2)?,
-        scope_revision: row.get(3)?,
-        target_sequence_before: row.get(4)?,
-        target_head_before: row.get(5)?,
-        state: batch_state_from(&row.get::<_, String>(6)?)?,
-        created_at: row.get(7)?,
-        previewed_at: row.get(8)?,
-        commit_sha: row.get(9)?,
-        published_at: row.get(10)?,
-        rollback_commit_sha: row.get(11)?,
-        rolled_back_at: row.get(12)?,
-        failure_code: row.get(13)?,
+        change_ids: serde_json::from_str(&row.get::<_, String>(3)?).unwrap_or_default(),
+        scope_revision: row.get(4)?,
+        target_sequence_before: row.get(5)?,
+        target_head_before: row.get(6)?,
+        state: batch_state_from(&row.get::<_, String>(7)?)?,
+        created_at: row.get(8)?,
+        previewed_at: row.get(9)?,
+        commit_sha: row.get(10)?,
+        published_at: row.get(11)?,
+        rollback_commit_sha: row.get(12)?,
+        rolled_back_at: row.get(13)?,
+        failure_code: row.get(14)?,
     })
 }
 
@@ -448,6 +493,7 @@ mod tests {
                 id: "batch".into(),
                 scope_id: "scope".into(),
                 target_id: "target".into(),
+                change_ids: vec!["change".into()],
                 scope_revision: 3,
                 target_sequence_before: 0,
                 target_head_before: "head".into(),
@@ -539,6 +585,42 @@ mod tests {
         second.source_transitions.clear();
 
         assert!(ledger.create_preview(&second).is_err());
+        drop(ledger);
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn rejects_a_preview_with_stale_target_preconditions() {
+        let path = temp_db();
+        create_scope_and_target(&path);
+        let ledger = LedgerRepository::open(&path).unwrap();
+        ledger.create_preview(&preview()).unwrap();
+        let connection = Connection::open(&path).unwrap();
+        connection
+            .execute(
+                "UPDATE release_batches SET state = 'published', published_at = 'later' WHERE batch_id = 'batch'",
+                [],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "UPDATE target_revisions SET sequence = 1, head_sha = 'new-head', active_batch_id = NULL WHERE target_id = 'target'",
+                [],
+            )
+            .unwrap();
+        drop(connection);
+
+        let mut stale = preview();
+        stale.batch.id = "stale".into();
+        stale.batch.target_sequence_before = 0;
+        stale.batch.target_head_before = "head".into();
+        stale.bindings.clear();
+        stale.revisions.clear();
+        stale.operations.clear();
+        stale.binding_transitions.clear();
+        stale.source_transitions.clear();
+
+        assert!(ledger.create_preview(&stale).is_err());
         drop(ledger);
         std::fs::remove_file(path).unwrap();
     }

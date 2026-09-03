@@ -12,7 +12,7 @@ export type ChangesApi = {
   listChanges: (scopeId: ScopeId) => Promise<Change[]>;
   listTargets?: () => Promise<ConnectedTarget[]>;
   previewRelease?: (input: { scope_id: ScopeId; change_ids: string[] }) => Promise<ReleasePlan>;
-  publishRelease?: (input: { scope_id: ScopeId; change_ids: string[] }) => Promise<Publication>;
+  publishRelease?: (input: { batch_id: string }) => Promise<Publication>;
 };
 
 export type ChangesState =
@@ -215,7 +215,7 @@ export function mountChanges(root: HTMLElement, api: ChangesApi = { listScopes, 
       const { plan, target } = release;
       const operationGeneration = ++releaseGeneration;
       release = { status: "publishing", plan, target }; render();
-      void api.publishRelease({ scope_id: plan.batch.scope_id, change_ids: plan.batch.change_ids }).then((publication) => {
+      void api.publishRelease({ batch_id: plan.batch.id }).then((publication) => {
         if (operationGeneration !== releaseGeneration) return;
         release = { status: "published", publication };
         selected.clear();

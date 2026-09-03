@@ -170,6 +170,7 @@ fn migrate_release_ledger(connection: &Connection) -> Result<()> {
            batch_id TEXT PRIMARY KEY NOT NULL,
            scope_id TEXT NOT NULL REFERENCES scopes(id),
            target_id TEXT NOT NULL REFERENCES targets(id),
+           change_ids TEXT NOT NULL DEFAULT '[]',
            scope_revision INTEGER NOT NULL,
            target_sequence_before INTEGER NOT NULL,
            target_head_before TEXT NOT NULL,
@@ -222,5 +223,16 @@ fn migrate_release_ledger(connection: &Connection) -> Result<()> {
            created_at TEXT NOT NULL,
            UNIQUE(batch_id, target_path, conflict_code)
          );",
-    )
+    )?;
+    let mut statement = connection.prepare("PRAGMA table_info(release_batches)")?;
+    let columns = statement
+        .query_map([], |row| row.get::<_, String>(1))?
+        .collect::<Result<Vec<_>>>()?;
+    if !columns.iter().any(|column| column == "change_ids") {
+        connection.execute(
+            "ALTER TABLE release_batches ADD COLUMN change_ids TEXT NOT NULL DEFAULT '[]'",
+            [],
+        )?;
+    }
+    Ok(())
 }

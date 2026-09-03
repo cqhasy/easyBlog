@@ -97,8 +97,8 @@ impl PublicationRepository {
             .expect("publication repository lock poisoned");
         let latest = connection
             .query_row(
-                "SELECT batch_id FROM publications WHERE scope_id = ?1 AND target_id = ?2 AND state IN ('published', 'rollback_pending') ORDER BY COALESCE(published_at, '') DESC, batch_id DESC LIMIT 1",
-                params![record.scope_id, record.target_id],
+                "SELECT batch_id FROM publications WHERE scope_id = ?1 AND state IN ('published', 'rollback_pending') ORDER BY COALESCE(published_at, '') DESC, batch_id DESC LIMIT 1",
+                params![record.scope_id],
                 |row| row.get::<_, String>(0),
             )
             .optional()?;
@@ -201,6 +201,26 @@ mod tests {
 
         assert!(repository.get("batch").is_err());
 
+        drop(repository);
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn only_the_latest_reversible_publication_for_a_scope_can_be_rolled_back() {
+        let path = temp_db();
+        let repository = PublicationRepository::open(&path).unwrap();
+        insert_raw(&path, "published", "[]");
+        let connection = Connection::open(&path).unwrap();
+        connection
+            .execute(
+                "INSERT INTO publications (batch_id, scope_id, target_id, commit_sha, change_ids, state, published_at) VALUES ('newer', 'scope', 'other-target', 'sha-2', '[]', 'published', 'later')",
+                [],
+            )
+            .unwrap();
+        drop(connection);
+
+        let older = repository.get("batch").unwrap().unwrap();
+        assert!(!repository.is_latest_reversible(&older).unwrap());
         drop(repository);
         std::fs::remove_file(path).unwrap();
     }

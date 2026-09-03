@@ -1,14 +1,22 @@
 use std::{collections::BTreeSet, path::Path};
 
+use chrono::{SecondsFormat, Utc};
+
 use crate::{
     changes::change::{Change, ChangeKind},
     content::normalize_local_markdown,
+    providers::git::GitCommands,
     providers::local::reader::LocalReader,
     releases::{FileSet, PlannedFile, PlannedFileContents, ReleaseBatch, ReleasePlan},
     scopes::scope::Scope,
     shared::errors::{AppError, AppResult},
     sources::source::Source,
-    storage::{changes::ChangeRepository, scopes::ScopeRepository, sources::SourceRepository},
+    storage::{
+        changes::ChangeRepository,
+        ledger::{LedgerBatch, LedgerRepository, PreviewRecord, SourceTransition},
+        scopes::ScopeRepository,
+        sources::SourceRepository,
+    },
     targets::{Target, TargetState, Template},
     workspace::Checkout,
 };
@@ -23,6 +31,7 @@ pub fn execute(
     sources: &SourceRepository,
     scopes: &ScopeRepository,
     changes: &ChangeRepository,
+    ledger: &LedgerRepository,
     input: PreviewReleaseInput,
 ) -> AppResult<ReleasePlan> {
     let scope = scopes
@@ -49,10 +58,66 @@ pub fn execute(
     let files = build_file_set(&source.path, &input.target, &selected)?;
     let batch = ReleaseBatch {
         id: uuid::Uuid::new_v4().to_string(),
-        scope_id: scope.id,
+        scope_id: scope.id.clone(),
         target_id: input.target.id.clone(),
         change_ids: input.change_ids,
     };
+    let snapshots = changes
+        .list_snapshots(&scope.id)
+        .map_err(|_| AppError::new("storage_error", "Snapshots could not be loaded"))?;
+    let now = Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true);
+    let head = GitCommands::commit_sha(checkout.root()).map_err(|_| {
+        AppError::new(
+            "target_unavailable",
+            "The target workspace has no publishable Git commit",
+        )
+    })?;
+    let source_transitions = selected
+        .iter()
+        .map(|change| SourceTransition {
+            source_identity: change.source_identity.clone(),
+            source_path: change.source_path.clone(),
+            before_fingerprint: snapshots
+                .iter()
+                .find(|snapshot| snapshot.source_identity == change.source_identity)
+                .map(|snapshot| snapshot.fingerprint.clone()),
+            after_fingerprint: change
+                .snapshot
+                .as_ref()
+                .map(|snapshot| snapshot.fingerprint.clone()),
+        })
+        .collect();
+    ledger
+        .create_preview(&PreviewRecord {
+            batch: LedgerBatch {
+                id: batch.id.clone(),
+                scope_id: scope.id.clone(),
+                target_id: input.target.id.clone(),
+                change_ids: batch.change_ids.clone(),
+                scope_revision: scope.revision,
+                target_sequence_before: 0,
+                target_head_before: head,
+                state: crate::releases::BatchState::Previewed,
+                created_at: now.clone(),
+                previewed_at: Some(now),
+                commit_sha: None,
+                published_at: None,
+                rollback_commit_sha: None,
+                rolled_back_at: None,
+                failure_code: None,
+            },
+            bindings: vec![],
+            revisions: vec![],
+            operations: vec![],
+            binding_transitions: vec![],
+            source_transitions,
+        })
+        .map_err(|_| {
+            AppError::new(
+                "release_preview_conflict",
+                "The target changed or already has a release preview",
+            )
+        })?;
     ReleasePlan::new(batch.id.clone(), batch, false, &files, checkout.root())
 }
 
@@ -248,6 +313,7 @@ mod tests {
         changes::change::{Change, ChangeKind},
         scopes::scope::{Scope, ScopeLifecycle},
         sources::source::Source,
+        storage::targets::{ConnectedTarget, TargetRepository},
     };
 
     use super::*;
@@ -280,11 +346,39 @@ mod tests {
         .unwrap();
         fs::write(source_root.join("media/cover.png"), [1_u8, 2, 3]).unwrap();
         git(&target_root, &["init"]);
+        fs::write(target_root.join(".gitkeep"), "").unwrap();
+        git(&target_root, &["add", "."]);
+        git(
+            &target_root,
+            &[
+                "-c",
+                "user.name=easyBlog test",
+                "-c",
+                "user.email=test@example.com",
+                "commit",
+                "-m",
+                "Initial",
+            ],
+        );
 
         let database = root.join("easyblog.sqlite");
         let sources = SourceRepository::open(&database).unwrap();
         let scopes = ScopeRepository::open(&database).unwrap();
         let changes = ChangeRepository::open(&database).unwrap();
+        let ledger = crate::storage::ledger::LedgerRepository::open(&database).unwrap();
+        let targets = TargetRepository::open(&database).unwrap();
+        let target = Target {
+            state: TargetState::Ready,
+            adapter: Some(crate::targets::PublishingAdapter::GithubPages),
+            ..Target::new("target", &target_root)
+        };
+        targets
+            .insert(&ConnectedTarget {
+                target: target.clone(),
+                name: "Target".into(),
+                created_at: "now".into(),
+            })
+            .unwrap();
         sources
             .insert(&Source {
                 id: "source".into(),
@@ -335,13 +429,10 @@ mod tests {
             &sources,
             &scopes,
             &changes,
+            &ledger,
             PreviewReleaseInput {
                 scope_id: "scope".into(),
-                target: Target {
-                    state: TargetState::Ready,
-                    adapter: Some(crate::targets::PublishingAdapter::GithubPages),
-                    ..Target::new("target", &target_root)
-                },
+                target,
                 change_ids: vec!["change".into()],
             },
         )
@@ -371,6 +462,8 @@ mod tests {
         assert!(crate::workspace::WorkingTree::require_clean(&target_root).is_ok());
 
         drop(changes);
+        drop(ledger);
+        drop(targets);
         drop(scopes);
         drop(sources);
         fs::remove_dir_all(root).unwrap();

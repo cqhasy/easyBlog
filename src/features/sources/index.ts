@@ -103,6 +103,14 @@ export function createRepositoryRefreshController(
   return { refresh, isLoading: () => loading };
 }
 
+export function createTargetConfigurationRequestController() {
+  let generation = 0;
+  return {
+    begin: () => ++generation,
+    isCurrent: (requestGeneration: number) => requestGeneration === generation,
+  };
+}
+
 function escapeHtml(value: string): string {
   return value.replace(/[&<>\"']/g, (character) =>
     ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[character] ?? character,
@@ -200,6 +208,7 @@ export function mountSources(
   let configurationForm: TargetConfigurationForm | undefined;
   let initialization: InitializationPreview | undefined;
   let configurationPending = false;
+  const configurationRequestController = createTargetConfigurationRequestController();
   const render = () => {
     if (state.status !== "ready") {
       root.innerHTML = renderSources(state);
@@ -326,17 +335,19 @@ export function mountSources(
     const action = target.dataset.action;
     if (action === "retry") { void refreshController.refresh(); return; }
     if (action === "refresh-repositories") { void reloadRepositories(); return; }
-    if (action === "close-target-configuration") { configuringTarget = undefined; candidates = []; configurationForm = undefined; initialization = undefined; render(); return; }
+    if (action === "close-target-configuration") { configurationRequestController.begin(); configuringTarget = undefined; candidates = []; configurationForm = undefined; initialization = undefined; render(); return; }
     if (action === "configure-target") {
       const selected = targets.find((item) => item.id === target.dataset.targetId);
       if (!selected || !api.inspectTargetConfiguration) return;
+      const requestGeneration = configurationRequestController.begin();
       configuringTarget = selected; candidates = []; configurationForm = undefined; initialization = undefined; targetMessage = "正在检查仓库布局..."; render();
       void api.inspectTargetConfiguration(selected.id).then((items) => {
+        if (!configurationRequestController.isCurrent(requestGeneration) || configuringTarget?.id !== selected.id) return;
         candidates = items;
         const selectedCandidate = items.find((candidate) => candidate.adapter === selected.adapter) ?? items[0];
         if (selectedCandidate) configurationForm = { adapter: selectedCandidate.adapter, postsDirectory: selected.adapter ? selected.layout.posts_directory : selectedCandidate.posts_directory, resourcesDirectory: selected.adapter ? selected.layout.resources_directory : selectedCandidate.resources_directory };
         render();
-      }).catch((error) => { targetMessage = errorMessage(error, "仓库布局无法检查"); render(); });
+      }).catch((error) => { if (!configurationRequestController.isCurrent(requestGeneration) || configuringTarget?.id !== selected.id) return; targetMessage = errorMessage(error, "仓库布局无法检查"); render(); });
       return;
     }
     if (action === "confirm-target-initialization" && configuringTarget && api.initializeTarget) {
