@@ -25,13 +25,25 @@ describe("app shell", () => {
   it("keeps the right workbench independent from the sidebar", () => {
     const html = renderAppShell({ page: "sources" }, "expanded");
 
-    expect(html).toContain('<aside class="app-sidebar"');
-    expect(html).toContain('<main class="app-workbench"');
+    expect(html).toMatch(
+      /<aside class="app-sidebar"[^>]*>[\s\S]*<\/aside><main class="app-workbench"/,
+    );
+    expect(html.match(/<main\b/g)).toHaveLength(1);
     expect(html).not.toContain('class="app-topbar"');
+    expect(html).not.toContain('class="github-status"');
+    expect(html).not.toContain('class="github-action"');
+    expect(html).not.toContain('data-github-status');
   });
 
   it("uses the same navigation markup for expanded and collapsed widths", () => {
-    expect(renderAppShell({ page: "account" }, "expanded")).toContain('data-sidebar-mode="expanded"');
-    expect(renderAppShell({ page: "account" }, "collapsed")).toContain('data-sidebar-mode="collapsed"');
+    const expanded = renderAppShell({ page: "account" }, "expanded");
+    const collapsed = renderAppShell({ page: "account" }, "collapsed");
+    const navigationMarkup = (html: string) =>
+      Array.from(html.matchAll(/<nav\b[^>]*>[\s\S]*?<\/nav>/g), ([markup]) => markup);
+
+    expect(expanded).toContain('data-sidebar-mode="expanded"');
+    expect(collapsed).toContain('data-sidebar-mode="collapsed"');
+    expect(navigationMarkup(expanded)).toHaveLength(2);
+    expect(navigationMarkup(expanded)).toEqual(navigationMarkup(collapsed));
   });
 });
