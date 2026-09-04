@@ -187,4 +187,24 @@ describe("sources feature", () => {
     expect(renderResources({ status: "ready", sources: [source], targets: [] }))
       .toContain('data-action="connect-target"');
   });
+
+  it("uses Chinese resource copy and blue-gray primary actions in the overview", () => {
+    const html = renderResources({
+      status: "ready",
+      sources: [source],
+      scopes: [summary],
+      targets: [],
+    });
+
+    expect(html).toContain('<p class="eyebrow">内容资源</p>');
+    expect(html).not.toContain("EASYBLOG / SOURCES");
+    expect(html).toContain('class="task-primary-button" data-action="add-source"');
+    expect(html).toContain('class="task-primary-button" data-action="connect-target"');
+    expect(renderResourceOverview({
+      kind: "source",
+      id: source.id,
+      source,
+      scopes: [summary],
+    })).toContain('class="task-primary-button" data-action="edit-source"');
+  });
 });

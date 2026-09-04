@@ -40,6 +40,8 @@ button { background: #207663; border: 1px solid #207663; border-radius: 5px; col
 button:hover { background: #175e4f; border-color: #175e4f; }
 button:active { transform: translateY(1px); }
 button:disabled { cursor: wait; opacity: .58; transform: none; }
+.task-primary-button { background: var(--accent); border-color: var(--accent); color: #fff; }
+.task-primary-button:hover { background: var(--accent-strong); border-color: var(--accent-strong); }
 .app-shell { background: var(--canvas); display: grid; grid-template-columns: 208px minmax(0, 1fr); min-height: 100vh; }
 .app-nav { background: var(--surface); border-right: 1px solid var(--border); color: var(--text); display: flex; flex-direction: column; padding: 24px 12px; }
 .app-brand { color: var(--text); font-family: Georgia, serif; font-size: 22px; font-weight: 700; padding: 0 12px 32px; }
@@ -181,8 +183,9 @@ time { color: #91a19b; font-size: 12px; white-space: nowrap; }
 .rule-list { display: grid; gap: 7px; }
 .rule-row { display: grid; gap: 7px; grid-template-columns: 1fr 28px; }
 .rule-row input { min-height: 34px; }
-.add-rule-button { align-self: start; background: transparent; border-color: #c8ddd3; color: #267560; font-size: 12px; justify-self: start; min-height: 32px; padding: 0 10px; }
-.add-rule-button:hover { background: #e9f5ef; border-color: #91c8b5; color: #17604e; }
+.add-rule-button { align-self: start; font-size: 12px; justify-self: start; min-height: 32px; padding: 0 10px; }
+.add-rule-button.task-primary-button { background: transparent; border-color: #bfd0dc; color: var(--accent-strong); }
+.add-rule-button.task-primary-button:hover { background: #f1f5f7; border-color: #9eb6cc; color: var(--accent-strong); }
 .editor-fields { display: grid; gap: 14px; grid-template-columns: 1fr 1fr; }
 .editor-error { background: #fff3ed; border-left: 3px solid #d36543; color: #a34d2f; font-size: 12px; margin: 20px 0 0; padding: 10px 12px; }
 .initialization-preview { background: #fff8e9; border-left: 3px solid #c89136; color: #75521b; margin-top: 20px; padding: 15px; }

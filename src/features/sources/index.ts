@@ -192,9 +192,9 @@ export function resourcesFor(
 export function renderResourceOverview(resource: SourceResource): string {
   if (resource.kind === "source") {
     const scopeRows = resource.scopes.length
-      ? `<ul class="resource-summary-list">${resource.scopes.map((summary) => `<li><span><strong>${escapeHtml(summary.scope.name)}</strong><small>${escapeHtml(scopeLabel(summary))}${summary.scope.target_id ? " · 已绑定发布目标" : " · 未绑定发布目标"}</small></span><button type="button" class="secondary-button" data-action="edit-source" data-source-id="${escapeHtml(resource.source.id)}" data-scope-id="${escapeHtml(summary.scope.id)}">编辑</button></li>`).join("")}</ul>`
+      ? `<ul class="resource-summary-list">${resource.scopes.map((summary) => `<li><span><strong>${escapeHtml(summary.scope.name)}</strong><small>${escapeHtml(scopeLabel(summary))}${summary.scope.target_id ? " · 已绑定发布目标" : " · 未绑定发布目标"}</small></span><button type="button" class="task-primary-button" data-action="edit-source" data-source-id="${escapeHtml(resource.source.id)}" data-scope-id="${escapeHtml(summary.scope.id)}">编辑</button></li>`).join("")}</ul>`
       : '<p class="resource-empty">尚未创建同步范围。</p>';
-    return `<section class="resource-overview" aria-labelledby="resource-title"><header><div><p class="eyebrow">内容来源</p><h2 id="resource-title">${escapeHtml(resource.source.name)}</h2><p>${escapeHtml(formatSourcePath(resource.source.path))}</p></div><details class="resource-overflow"><summary aria-label="更多操作">更多</summary><span>在编辑页管理范围状态。</span></details></header><dl class="resource-facts"><div><dt>来源类型</dt><dd>本地目录</dd></div><div><dt>同步范围</dt><dd>${resource.scopes.length} 个</dd></div></dl><section class="resource-summary"><div><h3>范围与绑定</h3><button type="button" data-action="edit-source" data-source-id="${escapeHtml(resource.source.id)}">新建范围</button></div>${scopeRows}</section></section>`;
+    return `<section class="resource-overview" aria-labelledby="resource-title"><header><div><p class="eyebrow">内容来源</p><h2 id="resource-title">${escapeHtml(resource.source.name)}</h2><p>${escapeHtml(formatSourcePath(resource.source.path))}</p></div><details class="resource-overflow"><summary aria-label="更多操作">更多</summary><span>在编辑页管理范围状态。</span></details></header><dl class="resource-facts"><div><dt>来源类型</dt><dd>本地目录</dd></div><div><dt>同步范围</dt><dd>${resource.scopes.length} 个</dd></div></dl><section class="resource-summary"><div><h3>范围与绑定</h3><button type="button" class="task-primary-button" data-action="edit-source" data-source-id="${escapeHtml(resource.source.id)}">新建范围</button></div>${scopeRows}</section></section>`;
   }
 
   const target = resource.target;
@@ -205,7 +205,7 @@ export function renderResourceOverview(resource: SourceResource): string {
       : target.state === "needs_reconnect"
         ? "需要重新连接"
         : "需要修复";
-  return `<section class="resource-overview" aria-labelledby="resource-title"><header><div><p class="eyebrow">GitHub 目标</p><h2 id="resource-title">${escapeHtml(target.repository)}</h2><p>${escapeHtml(target.default_branch)} · ${target.visibility === "private" ? "私有仓库" : "公开仓库"}</p></div><details class="resource-overflow"><summary aria-label="更多操作">更多</summary><span>在编辑页检查发布配置。</span></details></header><dl class="resource-facts"><div><dt>状态</dt><dd>${targetStatus}</dd></div><div><dt>已绑定范围</dt><dd>${resource.boundScopeCount} 个</dd></div></dl><section class="resource-summary"><div><h3>发布配置</h3><button type="button" data-action="edit-target" data-target-id="${escapeHtml(target.id)}">编辑</button></div><p class="resource-note">${target.adapter === "astro_content" ? "Astro 内容集合" : target.adapter === "github_pages" ? "GitHub Pages" : "尚未选择发布适配器"}</p></section></section>`;
+  return `<section class="resource-overview" aria-labelledby="resource-title"><header><div><p class="eyebrow">GitHub 目标</p><h2 id="resource-title">${escapeHtml(target.repository)}</h2><p>${escapeHtml(target.default_branch)} · ${target.visibility === "private" ? "私有仓库" : "公开仓库"}</p></div><details class="resource-overflow"><summary aria-label="更多操作">更多</summary><span>在编辑页检查发布配置。</span></details></header><dl class="resource-facts"><div><dt>状态</dt><dd>${targetStatus}</dd></div><div><dt>已绑定范围</dt><dd>${resource.boundScopeCount} 个</dd></div></dl><section class="resource-summary"><div><h3>发布配置</h3><button type="button" class="task-primary-button" data-action="edit-target" data-target-id="${escapeHtml(target.id)}">编辑</button></div><p class="resource-note">${target.adapter === "astro_content" ? "Astro 内容集合" : target.adapter === "github_pages" ? "GitHub Pages" : "尚未选择发布适配器"}</p></section></section>`;
 }
 
 function renderResourceList(resources: SourceResource[], selectedResourceId?: string): string {
@@ -228,13 +228,13 @@ function renderActionPanel(
   loadingRepositories: boolean,
 ): string {
   if (panel === "add-source") {
-    return `<section class="resource-action-panel" aria-label="添加内容来源"><header><h2>添加内容来源</h2><button type="button" class="icon-button" data-action="close-resource-action" aria-label="关闭" title="关闭">×</button></header><form id="add-source-form" class="resource-inline-form"><label>目录路径<input name="path" required placeholder="例如：C:\\Users\\you\\Documents\\blog" /></label><label>显示名称<span class="optional">可选</span><input name="name" placeholder="留空使用目录名" /></label><button type="submit">添加</button></form>${message ? `<p class="resource-message" role="status">${escapeHtml(message)}</p>` : ""}</section>`;
+    return `<section class="resource-action-panel" aria-label="添加内容来源"><header><h2>添加内容来源</h2><button type="button" class="icon-button" data-action="close-resource-action" aria-label="关闭" title="关闭">×</button></header><form id="add-source-form" class="resource-inline-form"><label>目录路径<input name="path" required placeholder="例如：C:\\Users\\you\\Documents\\blog" /></label><label>显示名称<span class="optional">可选</span><input name="name" placeholder="留空使用目录名" /></label><button type="submit" class="task-primary-button">添加</button></form>${message ? `<p class="resource-message" role="status">${escapeHtml(message)}</p>` : ""}</section>`;
   }
   if (panel === "connect-target") {
     const options = repositories.length
       ? repositories.map((repository) => `<option value="${escapeHtml(repository.repository)}" ${repository.repository === selectedRepository ? "selected" : ""}>${escapeHtml(repository.repository)} · ${repository.visibility === "private" ? "私有" : "公开"} · ${escapeHtml(repository.default_branch)}</option>`).join("")
       : '<option value="">没有可连接的仓库</option>';
-    return `<section class="resource-action-panel" aria-label="连接 GitHub 目标"><header><h2>连接 GitHub 目标</h2><button type="button" class="icon-button" data-action="close-resource-action" aria-label="关闭" title="关闭">×</button></header><form id="connect-target-form" class="resource-inline-form"><label>仓库<select name="repository" ${loadingRepositories ? "disabled" : ""}>${options}</select></label><button type="button" class="secondary-button" data-action="refresh-repositories" ${loadingRepositories ? "disabled" : ""}>${loadingRepositories ? "正在加载..." : "重新加载"}</button><button type="submit" ${selectedRepository ? "" : "disabled"}>连接</button></form>${message ? `<p class="resource-message" role="status">${escapeHtml(message)}</p>` : ""}</section>`;
+    return `<section class="resource-action-panel" aria-label="连接 GitHub 目标"><header><h2>连接 GitHub 目标</h2><button type="button" class="icon-button" data-action="close-resource-action" aria-label="关闭" title="关闭">×</button></header><form id="connect-target-form" class="resource-inline-form"><label>仓库<select name="repository" ${loadingRepositories ? "disabled" : ""}>${options}</select></label><button type="button" class="secondary-button" data-action="refresh-repositories" ${loadingRepositories ? "disabled" : ""}>${loadingRepositories ? "正在加载..." : "重新加载"}</button><button type="submit" class="task-primary-button" ${selectedRepository ? "" : "disabled"}>连接</button></form>${message ? `<p class="resource-message" role="status">${escapeHtml(message)}</p>` : ""}</section>`;
   }
   return "";
 }
@@ -250,10 +250,10 @@ export function renderResources(
 ): string {
   const actionPanel = renderActionPanel(panel, repositories, selectedRepository, message, loadingRepositories);
   if (state.status === "loading") {
-    return `<section class="sources-page resource-page"><header class="workspace-header"><div><p class="eyebrow">EASYBLOG / SOURCES</p><h1>内容来源</h1><p class="sources-subtitle">管理内容来源与 GitHub 发布目标。</p></div></header><p class="sources-status" role="status">正在加载资源...</p></section>`;
+    return `<section class="sources-page resource-page"><header class="workspace-header"><div><p class="eyebrow">内容资源</p><h1>内容来源</h1><p class="sources-subtitle">管理内容来源与 GitHub 发布目标。</p></div></header><p class="sources-status" role="status">正在加载资源...</p></section>`;
   }
   if (state.status === "error") {
-    return `<section class="sources-page resource-page"><header class="workspace-header"><div><p class="eyebrow">EASYBLOG / SOURCES</p><h1>内容来源</h1><p class="sources-subtitle">管理内容来源与 GitHub 发布目标。</p></div></header><div class="sources-error" role="alert"><strong>资源加载失败</strong><span>${escapeHtml(state.message)}</span><button type="button" data-action="retry">重试</button></div></section>`;
+    return `<section class="sources-page resource-page"><header class="workspace-header"><div><p class="eyebrow">内容资源</p><h1>内容来源</h1><p class="sources-subtitle">管理内容来源与 GitHub 发布目标。</p></div></header><div class="sources-error" role="alert"><strong>资源加载失败</strong><span>${escapeHtml(state.message)}</span><button type="button" data-action="retry">重试</button></div></section>`;
   }
   const resources = resourcesFor(
     state.status === "ready" ? state.sources : [],
@@ -262,7 +262,7 @@ export function renderResources(
   );
   const selected = resources.find((resource) => resource.id === selectedResourceId) ?? resources[0];
   const empty = resources.length === 0;
-  return `<section class="sources-page resource-page" aria-labelledby="sources-title"><header class="workspace-header"><div><p class="eyebrow">EASYBLOG / SOURCES</p><h1 id="sources-title">内容来源</h1><p class="sources-subtitle">管理内容来源、同步范围和 GitHub 发布目标。</p></div></header><section class="resource-actions" aria-label="资源操作"><button type="button" data-action="add-source">添加内容来源</button><button type="button" class="secondary-button" data-action="connect-target">连接 GitHub 目标</button></section>${actionPanel}<div class="resource-layout">${renderResourceList(resources, selected?.id)}<main class="resource-overview-region">${empty ? '<section class="resource-empty-state"><h2>从一个内容来源开始</h2><p>添加本地目录后，再创建同步范围并连接发布目标。</p></section>' : selected ? renderResourceOverview(selected) : ""}</main></div></section>`;
+  return `<section class="sources-page resource-page" aria-labelledby="sources-title"><header class="workspace-header"><div><p class="eyebrow">内容资源</p><h1 id="sources-title">内容来源</h1><p class="sources-subtitle">管理内容来源、同步范围和 GitHub 发布目标。</p></div></header><section class="resource-actions" aria-label="资源操作"><button type="button" class="task-primary-button" data-action="add-source">添加内容来源</button><button type="button" class="task-primary-button" data-action="connect-target">连接 GitHub 目标</button></section>${actionPanel}<div class="resource-layout">${renderResourceList(resources, selected?.id)}<main class="resource-overview-region">${empty ? '<section class="resource-empty-state"><h2>从一个内容来源开始</h2><p>添加本地目录后，再创建同步范围并连接发布目标。</p></section>' : selected ? renderResourceOverview(selected) : ""}</main></div></section>`;
 }
 
 export function renderSources(state: SourcesState): string {

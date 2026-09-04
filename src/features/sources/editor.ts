@@ -90,7 +90,7 @@ function adapterLabel(adapter: "github_pages" | "astro_content"): string {
 
 function renderRuleRows(kind: "include" | "exclude", patterns: string[]): string {
   const rows = patterns.map((pattern, index) => `<div class="rule-row"><input data-rule-kind="${kind}" data-rule-index="${index}" value="${escapeHtml(pattern)}" placeholder="例如：posts/**/*.md" /><button type="button" class="icon-button" aria-label="删除规则" title="删除规则" data-action="remove-rule" data-rule-kind="${kind}" data-rule-index="${index}">×</button></div>`).join("");
-  return `<div class="rule-list">${rows}<button class="add-rule-button" type="button" data-action="add-rule" data-rule-kind="${kind}">添加规则</button></div>`;
+  return `<div class="rule-list">${rows}<button class="task-primary-button add-rule-button" type="button" data-action="add-rule" data-rule-kind="${kind}">添加规则</button></div>`;
 }
 
 function renderTree(editor: SourceEditorState, parent = ".", depth = 0): string {
@@ -120,11 +120,24 @@ export function renderSourceEditor(editor: SourceEditorState): string {
   const lifecycleLabel = scope?.lifecycle === "paused" ? "恢复范围" : "暂停范围";
   const rootSelected = editor.selections.some((selection) => selection.node.value === ".");
   const disabled = editor.saving ? "disabled" : "";
-  return `<section class="focused-editor-page source-focused-editor" aria-labelledby="source-editor-title"><header class="focused-editor-header"><button type="button" class="back-button" data-action="back-to-sources" aria-label="返回内容来源" title="返回内容来源">←</button><div><p class="eyebrow">同步范围</p><h1 id="source-editor-title">${scope ? "编辑同步范围" : "新建同步范围"}</h1><p>${escapeHtml(editor.source.name)} · ${escapeHtml(editor.source.path)}</p></div></header><form id="source-editor-form" class="focused-editor-form"><section class="editor-section scope-name-section"><label>范围名称<input name="scope-name" required value="${escapeHtml(editor.name ?? `${editor.source.name} 同步范围`)}" ${disabled} /></label></section><section class="editor-section target-section"><div><h2>发布目标</h2><p>选择已准备好的 GitHub 仓库。</p></div><select name="target-id" ${disabled}>${targetOptions}</select></section><section class="editor-section selection-section"><div class="section-heading"><div><h2>同步内容</h2><p>选择目录或单篇 Markdown 文件。</p></div></div><div class="scope-root"><label><input type="checkbox" data-action="toggle-root" ${rootSelected ? "checked" : ""} ${disabled} /><span><strong>整个来源</strong><small>包含来源中的所有 Markdown 文件</small></span></label></div><div class="source-tree">${renderTree(editor)}</div></section><details class="focused-advanced"><summary>高级规则</summary><div class="advanced-content"><section class="editor-section rules-section"><div><h2>包含规则</h2><p>只同步符合这些路径规则的内容。</p></div>${renderRuleRows("include", editor.includePatterns)}</section><section class="editor-section rules-section"><div><h2>排除规则</h2><p>排除规则优先于包含规则。</p></div>${renderRuleRows("exclude", editor.excludePatterns)}</section></div></details>${editor.error ? `<p class="editor-error" role="alert">${escapeHtml(editor.error)}</p>` : ""}<footer class="editor-action-row"><div>${scope ? `<details class="editor-overflow"><summary>更多操作</summary><button type="button" class="secondary-button" data-action="toggle-lifecycle" ${editor.lifecyclePending ? "disabled" : ""}>${lifecycleLabel}</button><button type="button" class="danger-button" data-action="delete-scope" ${editor.lifecyclePending ? "disabled" : ""}>删除范围</button></details>` : ""}</div><div class="editor-actions"><button type="button" class="secondary-button" data-action="cancel-edit" ${disabled}>取消</button><button type="submit" ${disabled}>${editor.saving ? "正在保存..." : "保存"}</button></div></footer></form></section>`;
+  return `<section class="focused-editor-page source-focused-editor" aria-labelledby="source-editor-title"><header class="focused-editor-header"><button type="button" class="back-button" data-action="back-to-sources" aria-label="返回内容来源" title="返回内容来源">←</button><div><p class="eyebrow">同步范围</p><h1 id="source-editor-title">${scope ? "编辑同步范围" : "新建同步范围"}</h1><p>${escapeHtml(editor.source.name)} · ${escapeHtml(editor.source.path)}</p></div></header><form id="source-editor-form" class="focused-editor-form"><section class="editor-section scope-name-section"><label>范围名称<input name="scope-name" required value="${escapeHtml(editor.name ?? `${editor.source.name} 同步范围`)}" ${disabled} /></label></section><section class="editor-section target-section"><div><h2>发布目标</h2><p>选择已准备好的 GitHub 仓库。</p></div><select name="target-id" ${disabled}>${targetOptions}</select></section><section class="editor-section selection-section"><div class="section-heading"><div><h2>同步内容</h2><p>选择目录或单篇 Markdown 文件。</p></div></div><div class="scope-root"><label><input type="checkbox" data-action="toggle-root" ${rootSelected ? "checked" : ""} ${disabled} /><span><strong>整个来源</strong><small>包含来源中的所有 Markdown 文件</small></span></label></div><div class="source-tree">${renderTree(editor)}</div></section><details class="focused-advanced"><summary>高级规则</summary><div class="advanced-content"><section class="editor-section rules-section"><div><h2>包含规则</h2><p>只同步符合这些路径规则的内容。</p></div>${renderRuleRows("include", editor.includePatterns)}</section><section class="editor-section rules-section"><div><h2>排除规则</h2><p>排除规则优先于包含规则。</p></div>${renderRuleRows("exclude", editor.excludePatterns)}</section></div></details>${editor.error ? `<p class="editor-error" role="alert">${escapeHtml(editor.error)}</p>` : ""}<footer class="editor-action-row"><div>${scope ? `<details class="editor-overflow"><summary>更多操作</summary><button type="button" class="secondary-button" data-action="toggle-lifecycle" ${editor.lifecyclePending ? "disabled" : ""}>${lifecycleLabel}</button><button type="button" class="danger-button" data-action="delete-scope" ${editor.lifecyclePending ? "disabled" : ""}>删除范围</button></details>` : ""}</div><div class="editor-actions"><button type="button" class="secondary-button" data-action="cancel-edit" ${disabled}>取消</button><button type="submit" class="task-primary-button" ${disabled}>${editor.saving ? "正在保存..." : "保存"}</button></div></footer></form></section>`;
 }
 
 export function targetEditorSaveFailed(state: TargetEditorState, error: string): TargetEditorState {
   return { ...state, form: { ...state.form }, saving: false, error };
+}
+
+export function targetEditorDirectoryChanged(
+  state: TargetEditorState,
+  field: "postsDirectory" | "resourcesDirectory",
+  value: string,
+): TargetEditorState {
+  return {
+    ...state,
+    form: { ...state.form, [field]: value },
+    initialization: undefined,
+    dirty: true,
+  };
 }
 
 export function renderTargetEditor(editor: TargetEditorState): string {
@@ -136,7 +149,7 @@ export function renderTargetEditor(editor: TargetEditorState): string {
   const initialization = editor.initialization
     ? `<section class="initialization-preview" aria-labelledby="initialization-title"><h2 id="initialization-title">确认初始化</h2><p>将仅创建以下目录和配置文件：</p><ul>${editor.initialization.files.map((file) => `<li>${escapeHtml(file)}</li>`).join("")}</ul><details class="editor-overflow"><summary>初始化操作</summary><button type="button" class="danger-button" data-action="confirm-target-initialization" ${disabled}>确认创建</button></details></section>`
     : "";
-  return `<section class="focused-editor-page target-focused-editor" aria-labelledby="target-editor-title"><header class="focused-editor-header"><button type="button" class="back-button" data-action="back-to-sources" aria-label="返回内容来源" title="返回内容来源">←</button><div><p class="eyebrow">GitHub 目标</p><h1 id="target-editor-title">编辑发布目标</h1><p>${escapeHtml(editor.target.repository)} · ${targetStatus(editor.target)}</p></div></header><form id="target-editor-form" class="focused-editor-form"><section class="editor-section"><label>发布适配器<select name="adapter" ${disabled}>${adapterOptions}</select></label><p class="target-candidate-reason">${escapeHtml(selectedCandidate?.reason ?? "正在检查仓库布局...")}</p></section><section class="editor-section editor-fields"><label>文章目录<input name="posts-directory" required value="${escapeHtml(editor.form.postsDirectory)}" ${disabled} /></label><label>资源目录<input name="resources-directory" required value="${escapeHtml(editor.form.resourcesDirectory)}" ${disabled} /></label></section>${editor.error ? `<p class="editor-error" role="alert">${escapeHtml(editor.error)}</p>` : ""}${initialization}<footer class="editor-action-row"><span>保存后会先检查是否需要初始化目录。</span><div class="editor-actions"><button type="button" class="secondary-button" data-action="cancel-edit" ${disabled}>取消</button><button type="submit" ${disabled}>${editor.saving ? "正在保存..." : "保存"}</button></div></footer></form></section>`;
+  return `<section class="focused-editor-page target-focused-editor" aria-labelledby="target-editor-title"><header class="focused-editor-header"><button type="button" class="back-button" data-action="back-to-sources" aria-label="返回内容来源" title="返回内容来源">←</button><div><p class="eyebrow">GitHub 目标</p><h1 id="target-editor-title">编辑发布目标</h1><p>${escapeHtml(editor.target.repository)} · ${targetStatus(editor.target)}</p></div></header><form id="target-editor-form" class="focused-editor-form"><section class="editor-section"><label>发布适配器<select name="adapter" ${disabled}>${adapterOptions}</select></label><p class="target-candidate-reason">${escapeHtml(selectedCandidate?.reason ?? "正在检查仓库布局...")}</p></section><section class="editor-section editor-fields"><label>文章目录<input name="posts-directory" required value="${escapeHtml(editor.form.postsDirectory)}" ${disabled} /></label><label>资源目录<input name="resources-directory" required value="${escapeHtml(editor.form.resourcesDirectory)}" ${disabled} /></label></section>${editor.error ? `<p class="editor-error" role="alert">${escapeHtml(editor.error)}</p>` : ""}${initialization}<footer class="editor-action-row"><span>保存后会先检查是否需要初始化目录。</span><div class="editor-actions"><button type="button" class="secondary-button" data-action="cancel-edit" ${disabled}>取消</button><button type="submit" class="task-primary-button" ${disabled}>${editor.saving ? "正在保存..." : "保存"}</button></div></footer></form></section>`;
 }
 
 function setSelection(editor: SourceEditorState, node: SourceNodeRef, displayName: string, recursive: boolean, selected: boolean): void {
@@ -444,14 +457,15 @@ export function mountTargetEditor(
   root.addEventListener("input", (event) => {
     const input = event.target;
     if (!editor || !(input instanceof HTMLInputElement)) return;
-    if (input.name === "posts-directory") {
-      editor.form.postsDirectory = input.value;
-      editor.dirty = true;
-    }
-    if (input.name === "resources-directory") {
-      editor.form.resourcesDirectory = input.value;
-      editor.dirty = true;
-    }
+    const field = input.name === "posts-directory"
+      ? "postsDirectory"
+      : input.name === "resources-directory"
+        ? "resourcesDirectory"
+        : undefined;
+    if (!field) return;
+    const hadInitialization = Boolean(editor.initialization);
+    editor = targetEditorDirectoryChanged(editor, field, input.value);
+    if (hadInitialization) render();
   });
   render();
   void (api.listTargets?.() ?? Promise.resolve([])).then(async (targets) => {

@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import type { ConnectedTarget, Source } from "../../contracts";
 import {
   renderSourceEditor,
+  renderTargetEditor,
+  targetEditorDirectoryChanged,
   targetEditorSaveFailed,
   type SourceEditorState,
   type TargetEditorState,
@@ -68,5 +70,25 @@ describe("source and target editors", () => {
 
     expect(next.form.postsDirectory).toBe("content/posts");
     expect(next.error).toBe("目录不可用");
+  });
+
+  it.each([
+    ["postsDirectory", "content/articles"],
+    ["resourcesDirectory", "content/assets"],
+  ] as const)("clears an initialization preview when %s changes", (field, value) => {
+    const next = targetEditorDirectoryChanged({
+      ...initialTargetEditorState,
+      initialization: { files: ["content/posts", "content/resources"] },
+    }, field, value);
+
+    expect(next.form[field]).toBe(value);
+    expect(next.initialization).toBeUndefined();
+    expect(next.dirty).toBe(true);
+  });
+
+  it("marks focused editor primary actions with the blue-gray action class", () => {
+    expect(renderSourceEditor(editorState)).toContain('class="task-primary-button add-rule-button" type="button" data-action="add-rule"');
+    expect(renderSourceEditor(editorState)).toContain('type="submit" class="task-primary-button"');
+    expect(renderTargetEditor(initialTargetEditorState)).toContain('class="task-primary-button"');
   });
 });
