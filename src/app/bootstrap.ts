@@ -1,62 +1,117 @@
 import { mountChanges } from "../features/changes";
 import { mountSources } from "../features/sources";
 import { mountHistory } from "../features/history";
+import { mountWorkbench } from "../features/workbench";
 import { githubAuthorizationStatus, startGithubLogin } from "../bridge/targets";
 import type { GithubAuthorization } from "../contracts";
+import { createViewState, type AppView } from "./view-state";
 import "../styles.css";
+
+const pageLabels: Record<Extract<AppView["page"], "workbench" | "changes" | "sources" | "history">, string> = {
+  workbench: "工作台",
+  changes: "变更",
+  sources: "来源",
+  history: "历史",
+};
+
+function escapeHtml(value: string): string {
+  return value.replace(/[&<>"']/g, (character) =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[character] ?? character,
+  );
+}
+
+function githubAuthorizationMarkup(authorization: GithubAuthorization, loading = false): string {
+  const detail = authorization.state === "ready"
+    ? `已连接 @${authorization.login ?? "GitHub"}`
+    : authorization.state === "missing_cli"
+      ? "需要安装 GitHub CLI"
+      : authorization.state === "unavailable"
+        ? "暂时无法检查 GitHub"
+        : "尚未连接 GitHub";
+  const action = authorization.state === "ready"
+    ? '<button type="button" class="github-action" data-action="github-login">重新检查</button>'
+    : authorization.state === "missing_cli"
+      ? '<a class="github-action" href="https://cli.github.com/" target="_blank" rel="noreferrer">安装 gh</a>'
+      : `<button type="button" class="github-action" data-action="github-login" ${loading ? "disabled" : ""}>${loading ? "正在打开 GitHub..." : "连接 GitHub"}</button>`;
+  return `<div class="github-status"><strong>GitHub</strong><span>${escapeHtml(detail)}</span>${action}</div>`;
+}
+
+export function renderAppShell(
+  view: AppView,
+  authorization: GithubAuthorization = { state: "unavailable", login: null },
+  authorizationLoading = false,
+): string {
+  const currentPage = view.page === "review" ? "changes" : view.page === "source-editor" || view.page === "target-editor" ? "sources" : view.page;
+  const nav = (Object.keys(pageLabels) as Array<keyof typeof pageLabels>).map((page) => {
+    const active = currentPage === page;
+    return `<button type="button" data-page="${page}" ${active ? 'class="is-active" aria-current="page"' : ""}>${pageLabels[page]}</button>`;
+  }).join("");
+  const pageLabel = pageLabels[currentPage as keyof typeof pageLabels] ?? "easyBlog";
+  return `<div class="app-shell"><aside class="app-nav" aria-label="主导航"><div class="app-brand" aria-label="easyBlog">easy<span>Blog</span></div><nav aria-label="页面导航">${nav}</nav></aside><section class="app-frame"><header class="app-topbar" data-github-authorization><span class="app-page-label">${pageLabel}</span>${githubAuthorizationMarkup(authorization, authorizationLoading)}</header><main class="app-content" data-app-content></main></section></div>`;
+}
 
 export function bootstrap(root: HTMLElement | null): void {
   if (!root) return;
 
-  root.innerHTML = `<div class="app-shell"><aside class="app-nav" aria-label="主导航"><div class="app-brand" aria-label="easyBlog">easy<span>Blog</span></div><nav><button type="button" data-page="workbench">工作台</button><button type="button" data-page="sources">来源</button><button type="button" data-page="history">历史</button></nav><section class="github-authorization" aria-live="polite" data-github-authorization></section></aside><div class="app-content"><section data-page-panel="workbench"></section><section data-page-panel="sources" hidden></section><section data-page-panel="history" hidden></section></div></div>`;
-  const workbench = root.querySelector<HTMLElement>('[data-page-panel="workbench"]');
-  const sources = root.querySelector<HTMLElement>('[data-page-panel="sources"]');
-  const history = root.querySelector<HTMLElement>('[data-page-panel="history"]');
-  if (!workbench || !sources || !history) return;
+  const viewState = createViewState({ page: "workbench" });
+  let githubAuthorization: GithubAuthorization = { state: "unavailable", login: null };
+  let githubAuthorizationLoading = false;
+  let githubAuthorizationGeneration = 0;
 
-  const changes = mountChanges(workbench);
-  mountSources(sources, undefined, changes.refresh);
-  mountHistory(history);
-  const showPage = (page: "workbench" | "sources" | "history") => {
-    workbench.hidden = page !== "workbench";
-    sources.hidden = page !== "sources";
-    history.hidden = page !== "history";
-    root.querySelectorAll<HTMLButtonElement>("[data-page]").forEach((button) => {
-      const active = button.dataset.page === page;
-      button.classList.toggle("is-active", active);
-      button.setAttribute("aria-current", active ? "page" : "false");
-    });
+  const renderShell = () => {
+    root.innerHTML = renderAppShell(viewState.current(), githubAuthorization, githubAuthorizationLoading);
   };
+  const renderGithubAuthorization = () => {
+    const topbar = root.querySelector<HTMLElement>("[data-github-authorization]");
+    if (!topbar) return;
+    const view = viewState.current();
+    const currentPage = view.page === "review" ? "changes" : view.page === "source-editor" || view.page === "target-editor" ? "sources" : view.page;
+    const pageLabel = pageLabels[currentPage as keyof typeof pageLabels] ?? "easyBlog";
+    topbar.innerHTML = `<span class="app-page-label">${pageLabel}</span>${githubAuthorizationMarkup(githubAuthorization, githubAuthorizationLoading)}`;
+  };
+  const renderCurrentView = () => {
+    renderShell();
+    const content = root.querySelector<HTMLElement>("[data-app-content]");
+    if (!content) return;
+    const view = viewState.current();
+    if (view.page === "workbench") {
+      mountWorkbench(content, undefined, {
+        openChanges: (scopeId) => navigate({ page: "changes", scopeId }),
+        openSources: () => navigate({ page: "sources" }),
+      });
+      return;
+    }
+    if (view.page === "changes") {
+      mountChanges(content);
+      return;
+    }
+    if (view.page === "sources") {
+      mountSources(content, undefined, () => {});
+      return;
+    }
+    if (view.page === "history") {
+      mountHistory(content);
+      return;
+    }
+    content.innerHTML = `<section class="app-pending-view"><h1>此工作流将在后续步骤中提供。</h1></section>`;
+  };
+  const navigate = (next: AppView) => {
+    viewState.navigate(next);
+    renderCurrentView();
+  };
+
   root.addEventListener("click", (event) => {
     if ((event.target as HTMLElement).closest<HTMLButtonElement>("[data-action='github-login']")) {
       void refreshGithubAuthorization(githubAuthorization.state !== "ready");
       return;
     }
     const page = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-page]")?.dataset.page;
-    if (page === "workbench" || page === "sources" || page === "history") showPage(page);
+    if (page === "workbench" || page === "changes" || page === "sources" || page === "history") navigate({ page });
   });
-  const authorizationPanel = root.querySelector<HTMLElement>("[data-github-authorization]");
-  const renderGithubAuthorization = (authorization: GithubAuthorization, loading = false) => {
-    if (!authorizationPanel) return;
-    const detail = authorization.state === "ready"
-      ? `已连接 @${authorization.login ?? "GitHub"}`
-      : authorization.state === "missing_cli"
-        ? "需要安装 GitHub CLI"
-        : authorization.state === "unavailable"
-          ? "暂时无法检查 GitHub"
-          : "尚未连接 GitHub";
-    const action = authorization.state === "ready"
-      ? '<button type="button" data-action="github-login">重新检查</button>'
-      : authorization.state === "missing_cli"
-        ? '<a href="https://cli.github.com/" target="_blank" rel="noreferrer">安装 gh</a>'
-        : `<button type="button" data-action="github-login" ${loading ? "disabled" : ""}>${loading ? "正在打开 GitHub..." : "连接 GitHub"}</button>`;
-    authorizationPanel.innerHTML = `<strong>GitHub</strong><span>${detail}</span>${action}`;
-  };
-  let githubAuthorization: GithubAuthorization = { state: "unavailable", login: null };
-  let githubAuthorizationGeneration = 0;
   const refreshGithubAuthorization = async (startLogin = false) => {
     const requestGeneration = ++githubAuthorizationGeneration;
-    renderGithubAuthorization(githubAuthorization, startLogin);
+    githubAuthorizationLoading = startLogin;
+    renderGithubAuthorization();
     try {
       const authorization = startLogin ? await startGithubLogin() : await githubAuthorizationStatus();
       if (requestGeneration !== githubAuthorizationGeneration) return;
@@ -65,8 +120,9 @@ export function bootstrap(root: HTMLElement | null): void {
       if (requestGeneration !== githubAuthorizationGeneration) return;
       githubAuthorization = { state: "unavailable", login: null };
     }
-    renderGithubAuthorization(githubAuthorization);
+    githubAuthorizationLoading = false;
+    renderGithubAuthorization();
   };
+  renderCurrentView();
   void refreshGithubAuthorization();
-  showPage("workbench");
 }
