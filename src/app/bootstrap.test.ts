@@ -129,35 +129,102 @@ describe("application bootstrap", () => {
     const root = new AppDomRoot();
     const controller = createAppController(root as unknown as HTMLElement, {
       githubAuthorizationStatus: async () => ({ state: "unauthenticated", login: null }),
-      startGithubLogin: async () => ({ state: "ready", login: "octocat" }),
+      startGithubLogin: async () => ({ state: "started" }),
     }, 1280);
 
     await controller.start();
 
     expect(root.innerHTML).toContain('data-startup-state="authorization-required"');
+    expect(root.innerHTML).toContain('<img class="easyblog-mark" src="/easyblog-mark.png" alt=""');
+    expect(root.innerHTML).toContain("EasyBlog");
     expect(root.innerHTML).not.toContain('class="app-shell"');
   });
 
-  it("rechecks status after login before rendering Dashboard", async () => {
+  it("renders Dashboard only after a browser handoff is confirmed ready", async () => {
     const root = new AppDomRoot();
     const status = vi.fn()
       .mockResolvedValueOnce({ state: "unauthenticated", login: null })
       .mockResolvedValueOnce({ state: "ready", login: "octocat" });
     const controller = createAppController(root as unknown as HTMLElement, {
       githubAuthorizationStatus: status,
-      startGithubLogin: async () => ({ state: "ready", login: "octocat" }),
+      startGithubLogin: async () => ({ state: "started" }),
     }, 1280);
 
     await controller.start();
     await controller.authorize();
 
+    expect(status).toHaveBeenCalledOnce();
+    expect(root.innerHTML).toContain('data-startup-state="awaiting-browser-authorization"');
+
+    await controller.confirmAuthorization();
+
     expect(status).toHaveBeenCalledTimes(2);
     expect(root.innerHTML).toContain('data-page="dashboard" aria-current="page"');
   });
 
+  it("keeps the Welcome surface actionable while browser authorization is pending", async () => {
+    const root = new AppDomRoot();
+    const status = vi.fn()
+      .mockResolvedValueOnce({ state: "unauthenticated", login: null })
+      .mockResolvedValueOnce({ state: "ready", login: "octocat" });
+    const controller = createAppController(root as unknown as HTMLElement, {
+      githubAuthorizationStatus: status,
+      startGithubLogin: async () => ({ state: "started" } as never),
+    }, 1280);
+
+    await controller.start();
+    await controller.authorize();
+
+    expect(status).toHaveBeenCalledOnce();
+    expect(root.innerHTML).toContain('data-startup-state="awaiting-browser-authorization"');
+    expect(root.innerHTML).toContain('data-action="confirm-authorization"');
+    expect(root.innerHTML).not.toContain('class="app-shell"');
+    controller.dispose();
+  });
+
+  it("stops browser authorization polling after confirmation and disposal", async () => {
+    vi.useFakeTimers();
+    try {
+      const root = new AppDomRoot();
+      const status = vi.fn()
+        .mockResolvedValueOnce({ state: "unauthenticated", login: null })
+        .mockResolvedValueOnce({ state: "ready", login: "octocat" });
+      const controller = createAppController(root as unknown as HTMLElement, {
+        githubAuthorizationStatus: status,
+        startGithubLogin: async () => ({ state: "started" }),
+      }, 1280);
+
+      await controller.start();
+      await controller.authorize();
+      await vi.advanceTimersByTimeAsync(2_000);
+
+      expect(status).toHaveBeenCalledTimes(2);
+      expect(root.innerHTML).toContain('class="app-shell"');
+
+      await vi.advanceTimersByTimeAsync(4_000);
+      expect(status).toHaveBeenCalledTimes(2);
+
+      const pendingRoot = new AppDomRoot();
+      const pendingStatus = vi.fn().mockResolvedValue({ state: "unauthenticated", login: null });
+      const pendingController = createAppController(pendingRoot as unknown as HTMLElement, {
+        githubAuthorizationStatus: pendingStatus,
+        startGithubLogin: async () => ({ state: "started" }),
+      }, 1280);
+
+      await pendingController.start();
+      await pendingController.authorize();
+      pendingController.dispose();
+      await vi.advanceTimersByTimeAsync(4_000);
+
+      expect(pendingStatus).toHaveBeenCalledOnce();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("defers focus revalidation until a pending login confirms ready status", async () => {
     const root = new AppDomRoot();
-    let resolveLogin: ((authorization: { state: "ready"; login: string }) => void) | undefined;
+    let resolveLogin: ((launch: { state: "started" }) => void) | undefined;
     const status = vi.fn()
       .mockResolvedValueOnce({ state: "unauthenticated", login: null })
       .mockResolvedValueOnce({ state: "ready", login: "octocat" });
@@ -176,8 +243,13 @@ describe("application bootstrap", () => {
     expect(status).toHaveBeenCalledTimes(1);
     expect(root.innerHTML).toContain('data-startup-state="authorizing"');
 
-    resolveLogin?.({ state: "ready", login: "octocat" });
+    resolveLogin?.({ state: "started" });
     await authorization;
+
+    expect(status).toHaveBeenCalledOnce();
+    expect(root.innerHTML).toContain('data-startup-state="awaiting-browser-authorization"');
+
+    await controller.confirmAuthorization();
 
     expect(status).toHaveBeenCalledTimes(2);
     expect(root.innerHTML).toContain('data-page="dashboard" aria-current="page"');
@@ -190,7 +262,7 @@ describe("application bootstrap", () => {
       .mockResolvedValueOnce({ state: "unauthenticated", login: null });
     const controller = createAppController(root as unknown as HTMLElement, {
       githubAuthorizationStatus: status,
-      startGithubLogin: async () => ({ state: "ready", login: "octocat" }),
+      startGithubLogin: async () => ({ state: "started" }),
     }, 1280);
 
     await controller.start();
@@ -207,7 +279,7 @@ describe("application bootstrap", () => {
       .mockResolvedValueOnce({ state: "ready", login: "octocat" });
     const controller = createAppController(root as unknown as HTMLElement, {
       githubAuthorizationStatus: status,
-      startGithubLogin: async () => ({ state: "ready", login: "octocat" }),
+      startGithubLogin: async () => ({ state: "started" }),
     }, 1280);
 
     await controller.start();
@@ -232,7 +304,7 @@ describe("application bootstrap", () => {
     await controller.authorize();
 
     expect(root.innerHTML).toContain('data-startup-state="authorization-required"');
-    expect(root.innerHTML).toContain("GitHub authorization was not completed.");
+    expect(root.innerHTML).toContain("无法打开 GitHub 授权，请重试。");
     expect(root.innerHTML).toContain('data-action="authorize-github"');
   });
 
@@ -241,7 +313,7 @@ describe("application bootstrap", () => {
     const status = vi.fn()
       .mockResolvedValueOnce({ state: "ready", login: "octocat" })
       .mockResolvedValueOnce({ state: "ready", login: "octocat" });
-    const login = vi.fn().mockResolvedValue({ state: "ready", login: "octocat" });
+    const login = vi.fn().mockResolvedValue({ state: "started" });
     const controller = createAppController(root as unknown as HTMLElement, {
       githubAuthorizationStatus: status,
       startGithubLogin: login,
@@ -253,16 +325,16 @@ describe("application bootstrap", () => {
     await flushDomUpdates();
 
     expect(login).toHaveBeenCalledOnce();
-    expect(status).toHaveBeenCalledTimes(2);
-    expect(root.innerHTML).toContain('data-page="account" aria-current="page"');
-    expect(root.workbenchHTML).toContain("@octocat");
+    expect(status).toHaveBeenCalledOnce();
+    expect(root.innerHTML).toContain('data-startup-state="awaiting-browser-authorization"');
+    controller.dispose();
   });
 
   it("switches an expanded sidebar to compact mode at 960 pixels", async () => {
     const root = new AppDomRoot();
     const controller = createAppController(root as unknown as HTMLElement, {
       githubAuthorizationStatus: async () => ({ state: "ready", login: "octocat" }),
-      startGithubLogin: async () => ({ state: "ready", login: "octocat" }),
+      startGithubLogin: async () => ({ state: "started" }),
     }, 1280);
 
     await controller.start();
@@ -276,7 +348,7 @@ describe("application bootstrap", () => {
     const root = new AppDomRoot();
     const controller = createAppController(root as unknown as HTMLElement, {
       githubAuthorizationStatus: async () => ({ state: "ready", login: "octocat" }),
-      startGithubLogin: async () => ({ state: "ready", login: "octocat" }),
+      startGithubLogin: async () => ({ state: "started" }),
     }, 1001);
 
     await controller.start();
@@ -290,7 +362,7 @@ describe("application bootstrap", () => {
     const root = new AppDomRoot();
     const controller = createAppController(root as unknown as HTMLElement, {
       githubAuthorizationStatus: async () => ({ state: "ready", login: "octocat" }),
-      startGithubLogin: async () => ({ state: "ready", login: "octocat" }),
+      startGithubLogin: async () => ({ state: "started" }),
     }, 1280);
 
     await controller.start();
@@ -304,7 +376,7 @@ describe("application bootstrap", () => {
     const status = vi.fn().mockResolvedValue({ state: "ready", login: "octocat" });
     const controller = createAppController(root as unknown as HTMLElement, {
       githubAuthorizationStatus: status,
-      startGithubLogin: async () => ({ state: "ready", login: "octocat" }),
+      startGithubLogin: async () => ({ state: "started" }),
     }, 1280);
 
     await controller.start();
@@ -336,7 +408,7 @@ describe("application bootstrap", () => {
     const root = new AppDomRoot();
     const controller = createAppController(root as unknown as HTMLElement, {
       githubAuthorizationStatus: async () => ({ state: "ready", login: "octocat" }),
-      startGithubLogin: async () => ({ state: "ready", login: "octocat" }),
+      startGithubLogin: async () => ({ state: "started" }),
     }, 1280);
 
     await controller.start();

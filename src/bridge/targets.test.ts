@@ -28,8 +28,10 @@ describe("targets bridge", () => {
     expect(invoke).toHaveBeenNthCalledWith(2, "refresh_github_repository_permissions");
   });
 
-  it("supports mandatory GitHub onboarding through unchanged Tauri commands", async () => {
-    invoke.mockResolvedValue({ state: "ready", login: "octocat" });
+  it("starts the browser handoff through the GitHub onboarding command", async () => {
+    invoke
+      .mockResolvedValueOnce({ state: "unauthenticated", login: null })
+      .mockResolvedValueOnce({ state: "started" });
     await githubAuthorizationStatus();
     await startGithubLogin();
     expect(invoke).toHaveBeenNthCalledWith(1, "github_authorization_status");

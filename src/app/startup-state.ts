@@ -10,6 +10,7 @@ export type StartupState =
   | { kind: "checking" }
   | { kind: "authorization-required"; reason: AuthorizationReason; message?: string }
   | { kind: "authorizing" }
+  | { kind: "awaiting-browser-authorization" }
   | { kind: "ready"; account: { login: string | null } }
   | { kind: "error"; message: string };
 
@@ -18,6 +19,8 @@ export type StartupEvent =
   | { type: "authorization-checked"; authorization: GithubAuthorization }
   | { type: "check-failed"; message: string }
   | { type: "begin-login" }
+  | { type: "login-started" }
+  | { type: "authorization-expired" }
   | { type: "login-failed"; message: string };
 
 export function startupStateForAuthorization(authorization: GithubAuthorization): StartupState {
@@ -34,16 +37,29 @@ export function startupStateForAuthorization(authorization: GithubAuthorization)
   }
 }
 
-export function reduceStartupState(_current: StartupState, event: StartupEvent): StartupState {
+export function reduceStartupState(current: StartupState, event: StartupEvent): StartupState {
   switch (event.type) {
     case "begin-check":
       return { kind: "checking" };
-    case "authorization-checked":
-      return startupStateForAuthorization(event.authorization);
+    case "authorization-checked": {
+      const nextState = startupStateForAuthorization(event.authorization);
+      if (current.kind === "awaiting-browser-authorization" && nextState.kind !== "ready") {
+        return current;
+      }
+      return nextState;
+    }
     case "check-failed":
       return { kind: "error", message: event.message };
     case "begin-login":
       return { kind: "authorizing" };
+    case "login-started":
+      return { kind: "awaiting-browser-authorization" };
+    case "authorization-expired":
+      return {
+        kind: "authorization-required",
+        reason: "login-failed",
+        message: "GitHub 授权尚未完成，请在浏览器完成确认后重试。",
+      };
     case "login-failed":
       return {
         kind: "authorization-required",

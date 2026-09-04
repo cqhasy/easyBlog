@@ -10,6 +10,10 @@ export interface GithubAuthorization {
   login: string | null;
 }
 
+export interface GithubLoginLaunch {
+  state: "started";
+}
+
 export interface Target {
   id: TargetId;
   repository: string;

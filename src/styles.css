@@ -103,22 +103,16 @@ button:active { transform: translateY(1px); }
   align-items: center;
   display: grid;
   gap: 8px;
-  grid-template-columns: 30px minmax(0, 1fr) 32px;
+  grid-template-columns: 28px minmax(0, 1fr) 32px;
   min-height: 42px;
   padding: 0 2px 16px;
 }
-.app-brand-mark {
-  align-items: center;
-  background: var(--accent-soft);
-  border: 1px solid #c9d9e5;
-  color: var(--accent-strong);
-  display: inline-flex;
-  font-size: 10px;
-  font-weight: 800;
-  height: 30px;
-  justify-content: center;
-  letter-spacing: .04em;
-  width: 30px;
+.easyblog-mark {
+  border-radius: 6px;
+  display: block;
+  height: 28px;
+  object-fit: cover;
+  width: 28px;
 }
 .app-brand-name {
   color: var(--text);
@@ -158,7 +152,7 @@ button:active { transform: translateY(1px); }
 .app-nav-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .app-shell[data-sidebar-mode="collapsed"] .app-sidebar { padding: 12px 11px; }
 .app-shell[data-sidebar-mode="collapsed"] .app-brand { gap: 2px; grid-template-columns: 26px 26px; justify-content: space-between; padding-bottom: 16px; }
-.app-shell[data-sidebar-mode="collapsed"] .app-brand-mark { font-size: 8px; height: 26px; width: 26px; }
+.app-shell[data-sidebar-mode="collapsed"] .easyblog-mark { height: 26px; width: 26px; }
 .app-shell[data-sidebar-mode="collapsed"] .app-brand-name,
 .app-shell[data-sidebar-mode="collapsed"] .app-nav-label { display: none; }
 .app-shell[data-sidebar-mode="collapsed"] .app-sidebar-toggle { min-height: 26px; width: 26px; }
@@ -231,8 +225,19 @@ button:active { transform: translateY(1px); }
   max-width: 430px;
   padding: 28px;
 }
+.startup-brand {
+  align-items: center;
+  display: flex;
+  font-family: Georgia, serif;
+  font-size: 18px;
+  font-weight: 700;
+  gap: 9px;
+  margin-bottom: 20px;
+}
+.startup-brand .easyblog-mark { height: 28px; width: 28px; }
 .startup-panel h1, .startup-screen h1 { font-size: 25px; margin-bottom: 9px; }
 .startup-panel p, .startup-screen p { color: var(--muted); font-size: 13px; line-height: 1.55; margin-bottom: 20px; }
+.startup-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .dashboard-page {
   display: grid;
   min-height: 100%;

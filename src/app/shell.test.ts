@@ -5,6 +5,8 @@ describe("app shell", () => {
   it("renders only Dashboard, History, and Sources as main navigation", () => {
     const html = renderAppShell({ page: "dashboard" }, "expanded");
 
+    expect(html).toContain('<img class="easyblog-mark" src="/easyblog-mark.png" alt=""');
+    expect(html).not.toContain(">EB<");
     expect(html).toContain('data-page="dashboard"');
     expect(html).toContain('data-page="history"');
     expect(html).toContain('data-page="sources"');
