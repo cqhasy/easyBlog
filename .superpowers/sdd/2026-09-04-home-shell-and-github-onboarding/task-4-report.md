@@ -91,3 +91,29 @@ npm run build
 - Task 5 is still responsible for wiring these pure renderers into the intentionally stale
   bootstrap. That integration was intentionally left untouched; its current type errors also
   prevent the pre-commit frontend build from passing until Task 5 lands.
+
+## Fix Round 1
+
+### Changes
+
+- Escaped the ready GitHub login in `renderAccount()` before interpolating it into HTML.
+- Added regression coverage with a crafted login containing an HTML tag and event-handler
+  attribute.
+- Added idle-state assertions confirming reauthorization is enabled and labeled
+  `重新授权 GitHub`.
+
+### Test Command And Output
+
+```text
+npm test -- src/features/account/index.test.ts
+```
+
+- RED: 1 of 2 tests failed because the crafted GitHub login was rendered as raw HTML.
+- GREEN: passed, 1 test file and 2 tests.
+
+### Self-Review
+
+- The login is escaped for ampersands, angle brackets, single quotes, and double quotes before it
+  reaches the HTML template.
+- The authorization-pending rendering behavior remains covered and unchanged.
+- The fix is limited to the Account renderer, its focused test, and this report.

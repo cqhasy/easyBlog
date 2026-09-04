@@ -1,8 +1,17 @@
 import type { GithubAuthorization } from "../../contracts/models";
 
+function escapeHtml(value: string): string {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
 export function renderAccount(authorization: GithubAuthorization, authorizing: boolean): string {
   const login = authorization.state === "ready" && authorization.login
-    ? `@${authorization.login}`
+    ? `@${escapeHtml(authorization.login)}`
     : "尚未连接 GitHub";
   const buttonLabel = authorizing ? "正在重新授权..." : "重新授权 GitHub";
 
