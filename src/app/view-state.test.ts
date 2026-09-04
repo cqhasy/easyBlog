@@ -47,4 +47,10 @@ describe("app view state", () => {
     expect(html).toContain('class="github-status"');
     expect(html).not.toContain('class="github-authorization"');
   });
+
+  it("provides the single labeled application main landmark", () => {
+    const html = renderAppShell({ page: "workbench" });
+
+    expect(html).toContain('<main class="app-content" data-app-content aria-label="应用主内容"></main>');
+  });
 });

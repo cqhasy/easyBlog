@@ -72,6 +72,9 @@ function changeNote(change: Change): string {
 }
 
 type SelectedReviewState = Extract<ReviewState, { selectedChanges: Change[] }>;
+type ReviewView = "summary" | "markdown" | "diff";
+
+const reviewViews: ReviewView[] = ["summary", "markdown", "diff"];
 
 function activeFrom(state: SelectedReviewState): Change | undefined {
   return state.selectedChanges.find((change) => change.id === state.activeChangeId);
@@ -81,15 +84,15 @@ function renderSequence(state: SelectedReviewState): string {
   return `<aside class="review-sequence" aria-label="本次评审变更"><header><span>${state.selectedChanges.length} 项</span></header><ol>${state.selectedChanges.map((change) => `<li><button type="button" data-action="select-review-change" data-change-id="${escapeHtml(change.id)}" ${change.id === state.activeChangeId ? 'aria-current="true"' : ""}><strong>${escapeHtml(titleFor(change))}</strong><span>${escapeHtml(changeKindLabels[change.kind])}</span></button></li>`).join("")}</ol></aside>`;
 }
 
-function renderTabs(activeView: "summary" | "markdown" | "diff"): string {
-  return `<div class="review-tabs" role="tablist" aria-label="评审视图">${(["summary", "markdown", "diff"] as const).map((view) => {
+function renderTabs(activeView: ReviewView): string {
+  return `<div class="review-tabs" role="tablist" aria-label="评审视图">${reviewViews.map((view) => {
     const label = view === "summary" ? "概览" : view === "markdown" ? "Markdown" : "差异";
     const active = view === activeView;
     return `<button type="button" id="review-tab-${view}" role="tab" aria-controls="review-panel-${view}" data-action="change-review-view" data-review-view="${view}" aria-selected="${active}" tabindex="${active ? "0" : "-1"}">${label}</button>`;
   }).join("")}</div>`;
 }
 
-function renderActiveContent(change: Change | undefined, view: "summary" | "markdown" | "diff", plan?: ReleasePlan): string {
+function renderActiveContent(change: Change | undefined, view: ReviewView, plan?: ReleasePlan): string {
   const panel = (content: string) => `<section class="review-content" id="review-panel-${view}" role="tabpanel" aria-labelledby="review-tab-${view}" tabindex="0">${content}</section>`;
   if (!change) return panel("<p>请选择一项变更。</p>");
   if (view === "markdown") {
@@ -113,22 +116,24 @@ export function renderPublishDialog(plan: ReleasePlan, target: ConnectedTarget):
 }
 
 export function renderChangeReview(state: ReviewState): string {
-  if (state.status === "loading") return `<main class="review-page" aria-busy="true"><p class="review-loading">正在加载评审内容...</p></main>`;
+  if (state.status === "loading") return `<section class="review-page" aria-labelledby="review-loading-title" aria-busy="true"><h1 id="review-loading-title" class="visually-hidden">正在加载发布评审</h1><p class="review-loading">正在加载评审内容...</p></section>`;
   if (state.status === "error") {
     const action = state.recovery === "retry-preview" ? "retry-preview" : state.recovery === "open-sources" ? "open-sources" : "back-to-changes";
     const label = state.recovery === "retry-preview" ? "重试预览" : state.recovery === "open-sources" ? "前往来源" : "返回变更";
-    return `<main class="review-page"><section class="review-recovery" role="alert"><h1>无法继续评审</h1><p>${escapeHtml(state.message)}</p><button type="button" class="review-primary-button" data-action="${action}">${label}</button></section></main>`;
+    return `<section class="review-page" aria-labelledby="review-error-title"><section class="review-recovery" role="alert"><h1 id="review-error-title">无法继续评审</h1><p>${escapeHtml(state.message)}</p><button type="button" class="review-primary-button" data-action="${action}">${label}</button></section></section>`;
   }
-  if (state.status === "published") return `<main class="review-page"><section class="review-published" role="status"><p class="eyebrow">发布完成</p><h1>发布已推送</h1><p>提交 <code>${escapeHtml(state.publication.commit_sha)}</code> 已发布。</p><button type="button" data-action="back-to-changes">返回变更</button></section></main>`;
-  if (state.status === "publishing") return `<main class="review-page"><section class="review-recovery" role="status"><h1>正在发布</h1><p>正在向 ${escapeHtml(state.target.repository)} 推送已确认的预览。</p></section></main>`;
+  if (state.status === "published") return `<section class="review-page" aria-labelledby="review-published-title"><section class="review-published" role="status"><p class="eyebrow">发布完成</p><h1 id="review-published-title">发布已推送</h1><p>提交 <code>${escapeHtml(state.publication.commit_sha)}</code> 已发布。</p><button type="button" data-action="back-to-changes">返回变更</button></section></section>`;
+  if (state.status === "publishing") return `<section class="review-page" aria-labelledby="review-publishing-title"><section class="review-recovery" role="status"><h1 id="review-publishing-title">正在发布</h1><p>正在向 ${escapeHtml(state.target.repository)} 推送已确认的预览。</p></section></section>`;
 
   const activeChange = activeFrom(state);
-  const activeView = state.status === "ready" ? state.activeView : state.status === "preview" ? "diff" : "summary";
+  const activeView: ReviewView = state.status === "ready" ? state.activeView : state.status === "preview" ? "diff" : "summary";
+  const titleId = state.status === "ready" ? "review-ready-title" : state.status === "previewing" ? "review-previewing-title" : "review-preview-title";
+  const title = state.status === "ready" ? `发布评审：${state.scope.scope.name}` : state.status === "previewing" ? `正在生成发布预览：${state.scope.scope.name}` : `发布预览：${state.scope.scope.name}`;
   const plan = state.status === "preview" ? state.plan : undefined;
   const summary = state.status === "preview"
     ? `<footer class="review-actions"><span>${state.plan.diffs.length} 个目标文件</span><button type="button" class="review-primary-button" data-action="open-publish-dialog">确认发布</button></footer>${renderPublishDialog(state.plan, state.target)}`
     : `<footer class="review-actions"><span>${state.selectedChanges.length} 项变更待确认</span>${state.status === "previewing" ? '<p class="review-operation" role="status" aria-live="polite">正在生成发布预览...</p>' : ""}<button type="button" class="review-primary-button" data-action="preview-release" ${state.status === "previewing" ? "disabled" : ""}>${state.status === "previewing" ? "正在生成预览..." : "预览发布"}</button></footer>`;
-  return `<main class="review-page"><header class="review-header"><button type="button" class="secondary-button" data-action="back-to-changes">返回变更</button><div><p class="eyebrow">发布评审</p><h1>${escapeHtml(state.scope.scope.name)}</h1></div></header><div class="review-layout">${renderSequence(state)}<section class="review-pane">${renderTabs(activeView)}${renderActiveContent(activeChange, activeView, plan)}${summary}</section></div></main>`;
+  return `<section class="review-page" aria-labelledby="${titleId}"><header class="review-header"><button type="button" class="secondary-button" data-action="back-to-changes">返回变更</button><div><p class="eyebrow">发布评审</p><h1 id="${titleId}">${escapeHtml(title)}</h1></div></header><div class="review-layout">${renderSequence(state)}<section class="review-pane">${renderTabs(activeView)}${renderActiveContent(activeChange, activeView, plan)}${summary}</section></div></section>`;
 }
 
 export function mountChangeReview(
@@ -140,7 +145,7 @@ export function mountChangeReview(
   let state: ReviewState = { status: "loading" };
   let reviewScope: ScopeSummary | undefined;
   let reviewChanges: Change[] = [];
-  let activeView: "summary" | "markdown" | "diff" = "summary";
+  let activeView: ReviewView = "summary";
   let generation = 0;
   let publishDialogSession: { dialog: HTMLDialogElement; opener: HTMLElement; nativeModal: boolean } | undefined;
   const render = () => { root.innerHTML = renderChangeReview(state); };
@@ -176,6 +181,13 @@ export function mountChangeReview(
     }
     session.dialog.removeAttribute("open");
     restoreDialogFocus(session);
+  };
+  const selectReviewView = (nextView: ReviewView, restoreFocus = false) => {
+    if (state.status !== "ready") return;
+    activeView = nextView;
+    state = { ...state, activeView };
+    render();
+    if (restoreFocus) root.querySelector<HTMLElement>(`[data-review-view="${nextView}"]`)?.focus();
   };
   const backContext = () => ({
     scopeId: context.scopeId,
@@ -255,9 +267,7 @@ export function mountChangeReview(
     if (action === "change-review-view" && state.status === "ready") {
       const nextView = actionElement?.dataset.reviewView;
       if (nextView === "summary" || nextView === "markdown" || nextView === "diff") {
-        activeView = nextView;
-        state = { ...state, activeView };
-        render();
+        selectReviewView(nextView);
       }
       return;
     }
@@ -288,6 +298,25 @@ export function mountChangeReview(
         render();
       });
     }
+  });
+  root.addEventListener("keydown", (event) => {
+    if (state.status !== "ready") return;
+    const tab = (event.target as HTMLElement).closest<HTMLElement>("[role='tab'][data-review-view]");
+    const currentView = tab?.dataset.reviewView;
+    if (currentView !== "summary" && currentView !== "markdown" && currentView !== "diff") return;
+    const currentIndex = reviewViews.indexOf(currentView);
+    const nextView = event.key === "ArrowRight"
+      ? reviewViews[(currentIndex + 1) % reviewViews.length]
+      : event.key === "ArrowLeft"
+        ? reviewViews[(currentIndex - 1 + reviewViews.length) % reviewViews.length]
+        : event.key === "Home"
+          ? reviewViews[0]
+          : event.key === "End"
+            ? reviewViews.at(-1)
+            : undefined;
+    if (!nextView) return;
+    event.preventDefault();
+    selectReviewView(nextView, true);
   });
   void load();
 }

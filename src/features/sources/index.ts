@@ -239,6 +239,14 @@ function renderActionPanel(
   return "";
 }
 
+function renderResourcesHeader(): string {
+  return `<header class="workspace-header"><div><p class="eyebrow">内容资源</p><h1 id="sources-title">内容来源</h1><p class="sources-subtitle">管理内容来源、同步范围和 GitHub 发布目标。</p></div></header>`;
+}
+
+function renderResourcesPage(content: string): string {
+  return `<section class="sources-page resource-page" aria-labelledby="sources-title">${renderResourcesHeader()}${content}</section>`;
+}
+
 export function renderResources(
   state: ResourcesState,
   selectedResourceId?: string,
@@ -250,10 +258,10 @@ export function renderResources(
 ): string {
   const actionPanel = renderActionPanel(panel, repositories, selectedRepository, message, loadingRepositories);
   if (state.status === "loading") {
-    return `<section class="sources-page resource-page"><header class="workspace-header"><div><p class="eyebrow">内容资源</p><h1>内容来源</h1><p class="sources-subtitle">管理内容来源与 GitHub 发布目标。</p></div></header><p class="sources-status" role="status">正在加载资源...</p></section>`;
+    return renderResourcesPage('<p class="sources-status" role="status">正在加载资源...</p>');
   }
   if (state.status === "error") {
-    return `<section class="sources-page resource-page"><header class="workspace-header"><div><p class="eyebrow">内容资源</p><h1>内容来源</h1><p class="sources-subtitle">管理内容来源与 GitHub 发布目标。</p></div></header><div class="sources-error" role="alert"><strong>资源加载失败</strong><span>${escapeHtml(state.message)}</span><button type="button" data-action="retry">重试</button></div></section>`;
+    return renderResourcesPage(`<div class="sources-error" role="alert"><strong>资源加载失败</strong><span>${escapeHtml(state.message)}</span><button type="button" data-action="retry">重试</button></div>`);
   }
   const resources = resourcesFor(
     state.status === "ready" ? state.sources : [],
@@ -262,7 +270,7 @@ export function renderResources(
   );
   const selected = resources.find((resource) => resource.id === selectedResourceId) ?? resources[0];
   const empty = resources.length === 0;
-  return `<section class="sources-page resource-page" aria-labelledby="sources-title"><header class="workspace-header"><div><p class="eyebrow">内容资源</p><h1 id="sources-title">内容来源</h1><p class="sources-subtitle">管理内容来源、同步范围和 GitHub 发布目标。</p></div></header><section class="resource-actions" aria-label="资源操作"><button type="button" class="task-primary-button" data-action="add-source">添加内容来源</button><button type="button" class="task-primary-button" data-action="connect-target">连接 GitHub 目标</button></section>${actionPanel}<div class="resource-layout">${renderResourceList(resources, selected?.id)}<main class="resource-overview-region" aria-label="资源详情">${empty ? '<section class="resource-empty-state"><h2>从一个内容来源开始</h2><p>添加本地目录后，再创建同步范围并连接发布目标。</p></section>' : selected ? renderResourceOverview(selected) : ""}</main></div></section>`;
+  return renderResourcesPage(`<section class="resource-actions" aria-label="资源操作"><button type="button" class="task-primary-button" data-action="add-source">添加内容来源</button><button type="button" class="task-primary-button" data-action="connect-target">连接 GitHub 目标</button></section>${actionPanel}<div class="resource-layout">${renderResourceList(resources, selected?.id)}<section class="resource-overview-region" aria-label="资源详情">${empty ? '<section class="resource-empty-state"><h2>从一个内容来源开始</h2><p>添加本地目录后，再创建同步范围并连接发布目标。</p></section>' : selected ? renderResourceOverview(selected) : ""}</section></div>`);
 }
 
 export function renderSources(state: SourcesState): string {

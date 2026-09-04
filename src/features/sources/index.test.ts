@@ -198,7 +198,7 @@ describe("sources feature", () => {
 
     expect(html).toContain('<p class="eyebrow">内容资源</p>');
     expect(html).not.toContain("EASYBLOG / SOURCES");
-    expect(html).toContain('<main class="resource-overview-region" aria-label="资源详情">');
+    expect(html).toContain('<section class="resource-overview-region" aria-label="资源详情">');
     expect(html).toContain('class="task-primary-button" data-action="add-source"');
     expect(html).toContain('class="task-primary-button" data-action="connect-target"');
     expect(renderResourceOverview({
@@ -207,5 +207,19 @@ describe("sources feature", () => {
       source,
       scopes: [summary],
     })).toContain('class="task-primary-button" data-action="edit-source"');
+  });
+
+  it("labels loading, error, and ready resource regions from the same page heading", () => {
+    const states = [
+      renderResources({ status: "loading" }),
+      renderResources({ status: "error", message: "资源不可用" }),
+      renderResources({ status: "ready", sources: [source], scopes: [summary], targets: [] }),
+    ];
+
+    for (const html of states) {
+      expect(html).toContain('<section class="sources-page resource-page" aria-labelledby="sources-title">');
+      expect(html).toContain('<h1 id="sources-title">内容来源</h1>');
+      expect(html).not.toContain("<main");
+    }
   });
 });
