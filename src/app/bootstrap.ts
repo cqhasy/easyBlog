@@ -1,4 +1,5 @@
 import { mountChanges } from "../features/changes";
+import { mountChangeReview } from "../features/changes/review";
 import { mountSources } from "../features/sources";
 import { mountHistory } from "../features/history";
 import { mountWorkbench } from "../features/workbench";
@@ -82,7 +83,31 @@ export function bootstrap(root: HTMLElement | null): void {
       return;
     }
     if (view.page === "changes") {
-      mountChanges(content);
+      mountChanges(content, undefined, {
+        openReview: (context) => {
+          viewState.openReview(context.scopeId, context.selectedChangeIds, context.activeChangeId);
+          renderCurrentView();
+        },
+        openSources: () => navigate({ page: "sources" }),
+      }, {
+        scopeId: view.scopeId,
+        selectedChangeIds: view.selectedChangeIds,
+      });
+      return;
+    }
+    if (view.page === "review") {
+      mountChangeReview(content, undefined, {
+        scopeId: view.scopeId,
+        selectedChangeIds: view.selectedChangeIds,
+        activeChangeId: view.activeChangeId,
+      }, {
+        backToChanges: (context) => navigate({
+          page: "changes",
+          scopeId: context.scopeId,
+          selectedChangeIds: context.selectedChangeIds,
+        }),
+        openSources: () => navigate({ page: "sources" }),
+      });
       return;
     }
     if (view.page === "sources") {

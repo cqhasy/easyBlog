@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { createChangesRefreshController, defaultSelectedChanges, groupChanges, loadChanges, renderChanges, selectableChanges } from "./index";
+import { createChangesRefreshController, defaultSelectedChanges, groupChanges, loadChanges, reconcileSelectedChangeIds, renderChanges, selectableChanges } from "./index";
 import type { Change, ScopeSummary } from "../../contracts";
 
 const scope: ScopeSummary = {
@@ -8,7 +8,7 @@ const scope: ScopeSummary = {
   diagnostics: [],
 };
 
-function change(kind: Change["kind"], id = kind): Change {
+function change(kind: Change["kind"], id: string = kind): Change {
   return { id, scope_id: "scope-1", kind, source_identity: `${id}.md`, source_path: `${id}.md`, previous_path: kind === "moved" ? "old.md" : null, title: id, selected: kind !== "deleted" && kind !== "blocked", blocked_reason: kind === "blocked" ? "无法解析内容" : null, snapshot: null };
 }
 
@@ -20,12 +20,31 @@ describe("changes workspace", () => {
     expect(defaultSelectedChanges(changes).map((item) => item.kind)).toEqual(["added", "updated"]);
   });
 
-  it("renders blocked context and enables preview for publishable selections", () => {
+  it("keeps explicit deletion selections after a scan while removing stale and blocked IDs", () => {
+    const next = [
+      change("added", "keep"),
+      change("deleted", "delete"),
+      change("blocked", "blocked"),
+    ];
+
+    expect(reconcileSelectedChangeIds(new Set(["keep", "delete", "missing", "blocked"]), next))
+      .toEqual(new Set(["keep", "delete"]));
+    expect(defaultSelectedChanges(next).map((item) => item.id)).toEqual(["keep"]);
+  });
+
+  it("keeps deletions opt-in when a persisted record is marked selected", () => {
+    const deleted = { ...change("deleted"), selected: true };
+
+    expect(defaultSelectedChanges([deleted])).toEqual([]);
+  });
+
+  it("renders blocked context and offers focused review for publishable selections", () => {
     const html = renderChanges({ status: "ready", scope, changes: [change("blocked"), change("added")], scannedAt: "2026-09-02T00:00:00Z" }, new Set(["added"]));
     expect(html).toContain("需要处理");
     expect(html).toContain("无法解析内容");
-    expect(html).toContain("预览发布</button>");
-    expect(html).not.toContain('data-action="preview" disabled');
+    expect(html).toContain("进入评审</button>");
+    expect(html).toContain('data-action="open-review"');
+    expect(html).not.toContain('data-action="preview"');
   });
 
   it("loads persisted changes for the first active scope", async () => {
