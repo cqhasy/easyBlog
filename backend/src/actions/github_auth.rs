@@ -10,6 +10,11 @@ pub struct GithubAuthorization {
     pub login: Option<String>,
 }
 
+#[derive(Debug, PartialEq, Eq, Serialize)]
+pub struct GithubLoginLaunch {
+    pub state: &'static str,
+}
+
 pub fn status() -> GithubAuthorization {
     match GithubAuth::status() {
         GithubAuthStatus::Ready { login } => GithubAuthorization {
@@ -40,19 +45,25 @@ pub fn require_ready() -> AppResult<GithubAuthorization> {
     }
 }
 
-pub fn login() -> AppResult<GithubAuthorization> {
-    GithubAuth::login().map_err(|error| match error {
+pub fn start_login() -> AppResult<GithubLoginLaunch> {
+    start_login_with(GithubAuth::start_login)
+}
+
+fn start_login_with(
+    start: impl FnOnce() -> Result<(), GithubAuthError>,
+) -> AppResult<GithubLoginLaunch> {
+    start().map_err(|error| match error {
         GithubAuthError::MissingCli => error_for_state("missing_cli"),
         GithubAuthError::LoginFailed => AppError::new(
             "github_login_failed",
-            "GitHub authorization was not completed. Finish the GitHub CLI login and try again.",
+            "GitHub authorization could not be started. Check GitHub CLI and try again.",
         ),
         GithubAuthError::GitCredentialSetupFailed => AppError::new(
             "github_git_credentials_failed",
             "GitHub is connected, but Git HTTPS credentials could not be prepared.",
         ),
     })?;
-    require_ready()
+    Ok(GithubLoginLaunch { state: "started" })
 }
 
 pub fn prepare_git_credentials() -> AppResult<()> {
@@ -79,5 +90,26 @@ fn error_for_state(state: &str) -> AppError {
             "github_auth_unavailable",
             "GitHub authorization could not be checked. Check your network and try again.",
         ),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{start_login_with, GithubAuthError, GithubLoginLaunch};
+
+    #[test]
+    fn acknowledges_a_started_login_without_checking_authorization() {
+        assert!(matches!(
+            start_login_with(|| Ok(())),
+            Ok(GithubLoginLaunch { state: "started" })
+        ));
+    }
+
+    #[test]
+    fn reports_a_missing_cli_when_login_cannot_start() {
+        let error = start_login_with(|| Err(GithubAuthError::MissingCli))
+            .expect_err("missing GitHub CLI should block authorization launch");
+
+        assert_eq!(error.code, "github_cli_missing");
     }
 }

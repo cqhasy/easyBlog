@@ -14,8 +14,8 @@ pub async fn github_authorization_status() -> actions::github_auth::GithubAuthor
 }
 
 #[tauri::command]
-pub async fn start_github_login() -> AppResult<actions::github_auth::GithubAuthorization> {
-    tauri::async_runtime::spawn_blocking(actions::github_auth::login)
+pub async fn start_github_login() -> AppResult<actions::github_auth::GithubLoginLaunch> {
+    tauri::async_runtime::spawn_blocking(actions::github_auth::start_login)
         .await
         .map_err(|_| {
             AppError::new(
