@@ -202,6 +202,20 @@ describe("application bootstrap", () => {
     expect(root.innerHTML).toContain('data-sidebar-mode="collapsed"');
   });
 
+  it("switches an expanded sidebar to compact mode at the 1000 pixel boundary", async () => {
+    const root = new AppDomRoot();
+    const controller = createAppController(root as unknown as HTMLElement, {
+      githubAuthorizationStatus: async () => ({ state: "ready", login: "octocat" }),
+      startGithubLogin: async () => ({ state: "ready", login: "octocat" }),
+    }, 1001);
+
+    await controller.start();
+    expect(root.innerHTML).toContain('data-sidebar-mode="expanded"');
+
+    controller.setViewportWidth(1000);
+    expect(root.innerHTML).toContain('data-sidebar-mode="collapsed"');
+  });
+
   it("routes sidebar toggles through the shell state", async () => {
     const root = new AppDomRoot();
     const controller = createAppController(root as unknown as HTMLElement, {

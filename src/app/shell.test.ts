@@ -21,4 +21,17 @@ describe("app shell", () => {
     expect(html).toContain('data-page="history" aria-current="page"');
     expect(html).not.toContain('class="app-topbar"');
   });
+
+  it("keeps the right workbench independent from the sidebar", () => {
+    const html = renderAppShell({ page: "sources" }, "expanded");
+
+    expect(html).toContain('<aside class="app-sidebar"');
+    expect(html).toContain('<main class="app-workbench"');
+    expect(html).not.toContain('class="app-topbar"');
+  });
+
+  it("uses the same navigation markup for expanded and collapsed widths", () => {
+    expect(renderAppShell({ page: "account" }, "expanded")).toContain('data-sidebar-mode="expanded"');
+    expect(renderAppShell({ page: "account" }, "collapsed")).toContain('data-sidebar-mode="collapsed"');
+  });
 });

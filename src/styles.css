@@ -24,7 +24,7 @@
 }
 
 * { box-sizing: border-box; }
-body { margin: 0; min-width: 780px; }
+body { margin: 0; min-width: 0; }
 button, input, select, textarea { font: inherit; margin: 0; }
 button { appearance: none; cursor: pointer; }
 button:disabled { cursor: wait; opacity: .62; }
@@ -45,7 +45,7 @@ input, select {
 }
 input:focus, select:focus { border-color: var(--focus); box-shadow: 0 0 0 3px #2f6f9f26; }
 label { color: var(--text); display: grid; font-size: 12px; font-weight: 650; gap: 7px; }
-button, .github-action {
+button {
   align-items: center;
   background: var(--accent);
   border: 1px solid var(--accent);
@@ -58,7 +58,7 @@ button, .github-action {
   padding: 0 13px;
   text-decoration: none;
 }
-button:hover, .github-action:hover { background: var(--accent-strong); border-color: var(--accent-strong); }
+button:hover { background: var(--accent-strong); border-color: var(--accent-strong); }
 button:active { transform: translateY(1px); }
 .task-primary-button, .review-primary-button, .history-primary-button { background: var(--accent); border-color: var(--accent); }
 .task-primary-button:hover, .review-primary-button:hover, .history-primary-button:hover { background: var(--accent-strong); border-color: var(--accent-strong); }
@@ -82,31 +82,100 @@ button:active { transform: translateY(1px); }
 }
 
 /* shell and shared primitives */
-.app-shell { background: var(--canvas); display: grid; grid-template-columns: 212px minmax(0, 1fr); min-height: 100vh; }
-.app-nav { background: var(--surface); border-right: 1px solid var(--border); display: flex; flex-direction: column; padding: 24px 12px; }
-.app-brand { color: var(--text); font-family: Georgia, serif; font-size: 22px; font-weight: 700; padding: 0 12px 32px; }
-.app-brand span { color: var(--accent); }
-.app-nav nav { display: grid; gap: 4px; }
-.app-nav nav button {
+.app-shell {
+  background: var(--canvas);
+  display: grid;
+  gap: 16px;
+  grid-template-columns: 224px minmax(0, 1fr);
+  min-height: 100vh;
+  padding: 16px;
+}
+.app-shell[data-sidebar-mode="collapsed"] { grid-template-columns: 64px minmax(0, 1fr); }
+.app-sidebar {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  min-height: calc(100vh - 32px);
+  padding: 12px;
+}
+.app-brand {
+  align-items: center;
+  display: grid;
+  gap: 8px;
+  grid-template-columns: 30px minmax(0, 1fr) 32px;
+  min-height: 42px;
+  padding: 0 2px 16px;
+}
+.app-brand-mark {
+  align-items: center;
+  background: var(--accent-soft);
+  border: 1px solid #c9d9e5;
+  color: var(--accent-strong);
+  display: inline-flex;
+  font-size: 10px;
+  font-weight: 800;
+  height: 30px;
+  justify-content: center;
+  letter-spacing: .04em;
+  width: 30px;
+}
+.app-brand-name {
+  color: var(--text);
+  font-family: Georgia, serif;
+  font-size: 19px;
+  font-weight: 700;
+  overflow: hidden;
+  white-space: nowrap;
+}
+.app-sidebar-toggle {
+  background: transparent;
+  border-color: transparent;
+  color: var(--accent-strong);
+  min-height: 32px;
+  padding: 0;
+  width: 32px;
+}
+.app-sidebar-toggle:hover { background: var(--surface-muted); border-color: var(--border); color: var(--accent-strong); }
+.app-primary-navigation, .app-footer-navigation { display: grid; gap: 4px; }
+.app-footer-navigation { border-top: 1px solid var(--border); margin-top: auto; padding-top: 12px; }
+.app-nav-button {
   background: transparent;
   border-color: transparent;
   color: var(--muted);
-  justify-content: flex-start;
+  display: grid;
+  gap: 10px;
+  grid-template-columns: 20px minmax(0, 1fr);
+  justify-content: start;
   min-height: 38px;
-  padding: 0 12px;
+  padding: 0 9px;
   text-align: left;
+  width: 100%;
 }
-.app-nav nav button:hover { background: var(--surface-muted); border-color: var(--surface-muted); color: var(--text); }
-.app-nav nav button.is-active { background: var(--accent-soft); border-color: #c9d9e5; color: var(--accent-strong); }
-.app-frame { display: grid; grid-template-rows: 64px minmax(0, 1fr); min-width: 0; }
-.app-topbar { align-items: center; background: var(--surface); border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; min-height: 64px; padding: 0 32px; }
-.app-page-label { color: var(--text); font-size: 14px; font-weight: 700; }
-.github-status { align-items: center; display: flex; gap: 9px; min-height: 32px; }
-.github-status strong { font-size: 12px; }
-.github-status span { color: var(--muted); font-size: 12px; }
-.github-action { background: transparent; border-color: var(--border-strong); color: var(--accent-strong); font-size: 12px; min-height: 30px; padding: 0 9px; }
-.github-action:hover { background: var(--surface-muted); border-color: var(--focus); }
-.app-content { background: var(--canvas); min-width: 0; overflow: auto; }
+.app-nav-button svg { height: 18px; width: 18px; }
+.app-nav-button:hover { background: var(--surface-muted); border-color: var(--surface-muted); color: var(--text); }
+.app-nav-button[aria-current="page"] { background: var(--accent-soft); border-color: #c9d9e5; color: var(--accent-strong); }
+.app-nav-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.app-shell[data-sidebar-mode="collapsed"] .app-sidebar { padding: 12px 11px; }
+.app-shell[data-sidebar-mode="collapsed"] .app-brand { gap: 2px; grid-template-columns: 26px 26px; justify-content: space-between; padding-bottom: 16px; }
+.app-shell[data-sidebar-mode="collapsed"] .app-brand-mark { font-size: 8px; height: 26px; width: 26px; }
+.app-shell[data-sidebar-mode="collapsed"] .app-brand-name,
+.app-shell[data-sidebar-mode="collapsed"] .app-nav-label { display: none; }
+.app-shell[data-sidebar-mode="collapsed"] .app-sidebar-toggle { min-height: 26px; width: 26px; }
+.app-shell[data-sidebar-mode="collapsed"] .app-nav-button {
+  gap: 0;
+  grid-template-columns: 20px;
+  justify-content: center;
+  padding: 0;
+}
+.app-workbench {
+  background: #fdfefe;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  min-height: calc(100vh - 32px);
+  min-width: 0;
+  overflow: auto;
+}
 .app-pending-view { margin: 0 auto; max-width: 980px; padding: 48px 32px; }
 .sources-page, .changes-page, .history-page, .review-page, .workbench-page, .focused-editor-page { min-height: 100%; }
 .sources-page { margin: 0 auto; max-width: 1180px; padding: 40px 32px 72px; }
@@ -145,6 +214,64 @@ button:active { transform: translateY(1px); }
 }
 .resource-overflow summary::-webkit-details-marker, .editor-overflow summary::-webkit-details-marker, .history-overflow summary::-webkit-details-marker { display: none; }
 .resource-overflow > span { color: var(--muted); display: block; font-size: 11px; margin-top: 8px; max-width: 160px; }
+
+/* startup and shell destinations */
+.startup-page, .startup-screen {
+  align-items: center;
+  background: var(--canvas);
+  display: grid;
+  justify-content: center;
+  min-height: 100vh;
+  padding: 24px;
+}
+.startup-panel, .startup-screen > section {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  max-width: 430px;
+  padding: 28px;
+}
+.startup-panel h1, .startup-screen h1 { font-size: 25px; margin-bottom: 9px; }
+.startup-panel p, .startup-screen p { color: var(--muted); font-size: 13px; line-height: 1.55; margin-bottom: 20px; }
+.dashboard-page {
+  display: grid;
+  min-height: 100%;
+  padding: 38px;
+  place-items: center;
+}
+.dashboard-placeholder {
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  max-width: 580px;
+  padding: 24px;
+  width: 100%;
+}
+.dashboard-placeholder h1 { font-size: 24px; margin-bottom: 9px; }
+.dashboard-placeholder p { color: var(--muted); font-size: 13px; line-height: 1.55; margin: 0; }
+.settings-page, .account-page {
+  margin: 0 auto;
+  max-width: 760px;
+  min-height: 100%;
+  padding: 42px 38px 72px;
+}
+.settings-page header, .account-page header { border-bottom: 1px solid var(--border); margin-bottom: 24px; padding-bottom: 18px; }
+.settings-page h1, .account-page h1 { font-size: 25px; margin: 0; }
+.settings-list, .settings-rows, .account-identity, .account-rows {
+  border-bottom: 1px solid var(--border);
+  border-top: 1px solid var(--border);
+  margin: 0 0 24px;
+}
+.settings-list div, .settings-rows div, .account-identity div, .account-rows div {
+  align-items: baseline;
+  display: grid;
+  gap: 20px;
+  grid-template-columns: minmax(120px, .42fr) minmax(0, 1fr);
+  min-height: 52px;
+  padding: 14px 0;
+}
+.settings-list div + div, .settings-rows div + div { border-top: 1px solid var(--border); }
+.settings-list dt, .settings-rows dt, .account-identity dt, .account-rows dt { color: var(--muted); font-size: 12px; }
+.settings-list dd, .settings-rows dd, .account-identity dd, .account-rows dd { font-size: 13px; font-weight: 650; margin: 0; overflow-wrap: anywhere; }
 
 /* workbench */
 .workbench-page { margin: 0 auto; max-width: 980px; padding: 44px 38px 72px; }
@@ -402,16 +529,12 @@ dialog[data-publish-dialog]::backdrop, dialog[data-rollback-dialog]::backdrop { 
 .publish-dialog dl div + div, .history-dialog dl div + div { border-top: 1px solid var(--border); }
 .publish-dialog footer, .history-dialog footer { display: flex; flex-wrap: wrap; gap: 9px; justify-content: flex-end; }
 
-/* desktop-width fallbacks */
-@media (max-width: 880px) {
-  body { min-width: 0; }
-  .app-shell { display: block; }
-  .app-nav { align-items: center; flex-direction: row; justify-content: space-between; padding: 9px 18px; }
-  .app-brand { font-size: 19px; padding: 0; }
-  .app-nav nav { display: flex; gap: 4px; }
-  .app-nav nav button { min-height: 34px; padding: 0 10px; }
-  .app-topbar { padding: 0 20px; }
-  .sources-page, .changes-page, .history-page, .review-page { padding: 30px 20px 52px; }
+/* compact workbench */
+@media (max-width: 1000px) {
+  .app-shell { gap: 12px; padding: 12px; }
+  .app-sidebar, .app-workbench { min-height: calc(100vh - 24px); }
+  .sources-page, .changes-page, .history-page, .review-page, .workbench-page, .settings-page, .account-page { padding: 30px 24px 56px; }
+  .dashboard-page { padding: 24px; }
   .workspace-header, .changes-header { align-items: flex-start; flex-direction: column; }
   .resource-inline-form, .editor-fields, .rules-section { grid-template-columns: 1fr; }
   .resource-actions, .changes-toolbar-actions { justify-content: flex-start; }
