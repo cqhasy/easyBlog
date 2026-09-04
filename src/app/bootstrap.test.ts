@@ -231,6 +231,30 @@ describe("application bootstrap", () => {
     }
   });
 
+  it("returns to a retryable authorization state when browser status polling rejects", async () => {
+    vi.useFakeTimers();
+    try {
+      const root = new AppDomRoot();
+      const controller = createAppController(root as unknown as HTMLElement, {
+        githubAuthorizationStatus: async () => ({ state: "unauthenticated", login: null }),
+        startGithubLogin: async () => ({ state: "started", device_code: "534D-B889" }),
+        githubLoginStatus: async () => {
+          throw new Error("bridge unavailable");
+        },
+      }, 1280);
+
+      await controller.start();
+      await controller.authorize();
+      await vi.advanceTimersByTimeAsync(2_000);
+
+      expect(root.innerHTML).toContain('data-startup-state="authorization-required"');
+      expect(root.innerHTML).toContain("GitHub authorization could not be checked. Please retry.");
+      controller.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("stops browser authorization polling after confirmation and disposal", async () => {
     vi.useFakeTimers();
     try {
@@ -420,6 +444,22 @@ describe("application bootstrap", () => {
     root.clickAction("toggle-sidebar");
 
     expect(root.innerHTML).toContain('data-sidebar-mode="collapsed"');
+  });
+
+  it("restores an expanded sidebar after a narrow-screen toggle and resize", async () => {
+    const root = new AppDomRoot();
+    const controller = createAppController(root as unknown as HTMLElement, {
+      githubAuthorizationStatus: async () => ({ state: "ready", login: "octocat" }),
+      startGithubLogin: async () => ({ state: "started", device_code: "534D-B889" }),
+    }, 960);
+
+    await controller.start();
+    expect(root.innerHTML).toContain('data-sidebar-mode="collapsed"');
+
+    controller.toggleSidebar();
+    controller.setViewportWidth(1280);
+
+    expect(root.innerHTML).toContain('data-sidebar-mode="expanded"');
   });
 
   it("preserves the mounted editor workbench across safe shell updates", async () => {

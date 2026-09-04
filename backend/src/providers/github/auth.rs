@@ -30,13 +30,12 @@ pub enum GithubLoginStatus {
 
 const DEVICE_CODE_WAIT_TIMEOUT: Duration = Duration::from_secs(15);
 const GITHUB_DEVICE_AUTHORIZATION_URL: &str = "https://github.com/login/device";
-const GITHUB_LOGIN_ARGUMENTS: [&str; 8] = [
+const GITHUB_LOGIN_ARGUMENTS: [&str; 7] = [
     "auth",
     "login",
     "--hostname",
     "github.com",
     "--web",
-    "--clipboard",
     "--git-protocol",
     "https",
 ];
@@ -59,15 +58,23 @@ impl GithubLoginLauncher for SystemGithubLoginLauncher {
             .env("GH_FORCE_TTY", "120")
             .env("NO_COLOR", "1")
             .spawn()?;
-        let stdout = child
-            .stdout
-            .take()
-            .ok_or_else(|| io::Error::other("GitHub CLI standard output is unavailable"))?;
-        let stderr = child
-            .stderr
-            .take()
-            .ok_or_else(|| io::Error::other("GitHub CLI standard error is unavailable"))?;
-        let device_code = read_device_code(stdout, stderr)?;
+        let Some(stdout) = child.stdout.take() else {
+            stop_login_process(&mut child);
+            return Err(io::Error::other(
+                "GitHub CLI standard output is unavailable",
+            ));
+        };
+        let Some(stderr) = child.stderr.take() else {
+            stop_login_process(&mut child);
+            return Err(io::Error::other("GitHub CLI standard error is unavailable"));
+        };
+        let device_code = match read_device_code(stdout, stderr) {
+            Ok(device_code) => device_code,
+            Err(error) => {
+                stop_login_process(&mut child);
+                return Err(error);
+            }
+        };
         monitor_login_completion(child, self.attempt_id);
         Ok(device_code)
     }
@@ -171,7 +178,10 @@ impl GithubAuth {
         };
         if output.status.success() {
             GithubAuthStatus::Ready {
-                login: parse_login(&String::from_utf8_lossy(&output.stdout)),
+                login: parse_login_from_status_output(
+                    &String::from_utf8_lossy(&output.stdout),
+                    &String::from_utf8_lossy(&output.stderr),
+                ),
             }
         } else {
             GithubAuthStatus::Unauthenticated
@@ -277,6 +287,11 @@ fn monitor_login_completion(mut child: Child, attempt_id: u64) {
         };
         complete_login_attempt(attempt_id, outcome);
     });
+}
+
+fn stop_login_process(child: &mut Child) {
+    let _ = child.kill();
+    let _ = child.wait();
 }
 
 fn complete_login_attempt(attempt_id: u64, outcome: GithubLoginAttemptOutcome) {
@@ -391,13 +406,22 @@ fn parse_login(status: &str) -> Option<String> {
         .filter(|login| !login.is_empty())
 }
 
+fn parse_login_from_status_output(stdout: &str, stderr: &str) -> Option<String> {
+    parse_login(stdout).or_else(|| parse_login(stderr))
+}
+
 #[cfg(test)]
 mod tests {
-    use std::{cell::RefCell, io};
+    use std::{
+        cell::RefCell,
+        io,
+        process::{Child, Command},
+    };
 
     use super::{
-        parse_device_code, parse_login, start_login_with, GithubAuthError, GithubBrowserLauncher,
-        GithubLoginAttemptOutcome, GithubLoginLauncher, GithubLoginStatus, GithubLoginTracker,
+        parse_device_code, parse_login, parse_login_from_status_output, start_login_with,
+        stop_login_process, GithubAuthError, GithubBrowserLauncher, GithubLoginAttemptOutcome,
+        GithubLoginLauncher, GithubLoginStatus, GithubLoginTracker,
         GITHUB_DEVICE_AUTHORIZATION_URL,
     };
 
@@ -454,6 +478,22 @@ mod tests {
         }
     }
 
+    #[cfg(windows)]
+    fn spawn_long_running_process() -> Child {
+        Command::new("cmd")
+            .args(["/C", "ping -n 30 127.0.0.1 > NUL"])
+            .spawn()
+            .expect("test process should start")
+    }
+
+    #[cfg(unix)]
+    fn spawn_long_running_process() -> Child {
+        Command::new("sh")
+            .args(["-c", "sleep 30"])
+            .spawn()
+            .expect("test process should start")
+    }
+
     #[test]
     fn extracts_the_cli_reported_account_from_standard_output() {
         assert_eq!(
@@ -461,6 +501,24 @@ mod tests {
             Some("octocat".into())
         );
         assert_eq!(parse_login("not logged in"), None);
+    }
+
+    #[test]
+    fn falls_back_to_standard_error_for_older_github_cli_status_output() {
+        assert_eq!(
+            parse_login_from_status_output(
+                "github.com\n  ✓ Logged in to github.com account octocat (keyring)\n",
+                "legacy output",
+            ),
+            Some("octocat".into())
+        );
+        assert_eq!(
+            parse_login_from_status_output(
+                "github.com\n",
+                "github.com\n  ✓ Logged in to github.com account hubot (keyring)\n",
+            ),
+            Some("hubot".into())
+        );
     }
 
     #[test]
@@ -481,6 +539,18 @@ mod tests {
     }
 
     #[test]
+    fn stops_and_reaps_a_login_process_after_device_code_collection_fails() {
+        let mut child = spawn_long_running_process();
+
+        stop_login_process(&mut child);
+
+        assert!(child
+            .try_wait()
+            .expect("child status should be available")
+            .is_some());
+    }
+
+    #[test]
     fn starts_github_authorization_and_returns_the_device_code() {
         let launcher = FakeGithubLoginLauncher::default();
         let browser = FakeGithubBrowserLauncher::default();
@@ -497,7 +567,6 @@ mod tests {
                 "--hostname".to_owned(),
                 "github.com".to_owned(),
                 "--web".to_owned(),
-                "--clipboard".to_owned(),
                 "--git-protocol".to_owned(),
                 "https".to_owned(),
             ]]

@@ -238,6 +238,12 @@ export function createAppController(
         return;
       }
       await checkAuthorization(generation);
+    } catch {
+      if (generation !== authorizationGeneration) return;
+      transition({
+        type: "login-failed",
+        message: "GitHub authorization could not be checked. Please retry.",
+      });
     } finally {
       browserAuthorizationCheckInFlight = false;
     }
@@ -307,8 +313,12 @@ export function createAppController(
       render();
     },
     toggleSidebar: () => {
+      const currentMode = resolveSidebarMode(
+        viewState.sidebarPreference(),
+        viewportWidth,
+      );
       viewState.setSidebarPreference(
-        viewState.sidebarPreference() === "expanded" ? "collapsed" : "expanded",
+        currentMode === "expanded" ? "collapsed" : "expanded",
       );
       if (startupState.kind === "ready") updateSidebarMode();
       else render();
