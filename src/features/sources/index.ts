@@ -285,6 +285,7 @@ export function mountSources(
   api: SourcesApi = defaultSourcesApi,
   navigation: SourcesNavigation = { openSourceEditor: () => undefined, openTargetEditor: () => undefined },
   initialResourceId?: string,
+  isActive: () => boolean = () => true,
 ): void {
   let state: ResourcesState = { status: "loading" };
   let selectedResourceId = initialResourceId;
@@ -295,6 +296,7 @@ export function mountSources(
   let loadingRepositories = false;
   let generation = 0;
   const render = () => {
+    if (!isActive()) return;
     root.innerHTML = renderResources(state, selectedResourceId, panel, repositories, selectedRepository, message, loadingRepositories);
   };
   const refresh = async () => {
@@ -302,12 +304,12 @@ export function mountSources(
     state = { status: "loading" };
     render();
     const nextState = await loadResources(api);
-    if (requestGeneration !== generation) return;
+    if (!isActive() || requestGeneration !== generation) return;
     state = nextState;
     render();
   };
   const refreshRepositories = async () => {
-    if (loadingRepositories) return;
+    if (!isActive() || loadingRepositories) return;
     loadingRepositories = true;
     message = "正在加载可连接的 GitHub 仓库...";
     render();
@@ -318,6 +320,7 @@ export function mountSources(
         : repositories[0]?.repository ?? "";
       message = repositories.length ? "已加载可连接的 GitHub 仓库。" : "没有发现可连接的 GitHub 仓库。";
     } catch (error) {
+      if (!isActive()) return;
       message = errorMessage(error, "GitHub 仓库无法加载");
     } finally {
       loadingRepositories = false;
@@ -336,11 +339,13 @@ export function mountSources(
         path: String(data.get("path") ?? ""),
         name: String(data.get("name") ?? "") || undefined,
       }).then((source) => {
+        if (!isActive()) return;
         selectedResourceId = source.id;
         panel = undefined;
         message = "";
         return refresh();
       }).catch((error) => {
+        if (!isActive()) return;
         message = errorMessage(error, "内容来源无法添加");
         render();
       });
@@ -353,8 +358,10 @@ export function mountSources(
       message = `正在连接 ${repository.repository}...`;
       render();
       void api.connectTarget(repository).then((target) => {
+        if (!isActive()) return;
         navigation.openTargetEditor(target.id);
       }).catch((error) => {
+        if (!isActive()) return;
         message = errorMessage(error, "GitHub 目标无法连接");
         render();
       });

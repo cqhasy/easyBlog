@@ -192,14 +192,17 @@ export function mountSourceEditor(
   sourceId: string,
   scopeId: string | undefined,
   navigation: EditorNavigation,
+  isActive: () => boolean = () => true,
 ): void {
   let editor: SourceEditorState | undefined;
   const render = () => {
+    if (!isActive()) return;
     root.innerHTML = editor
       ? renderSourceEditor(editor)
       : '<section class="focused-editor-page"><p class="sources-status" role="status">正在加载同步范围...</p></section>';
   };
   const back = () => {
+    if (!isActive()) return;
     if (!editor || confirmDiscard(editor)) navigation.backToSources(sourceId);
   };
   root.addEventListener("submit", (event) => {
@@ -223,9 +226,10 @@ export function mountSourceEditor(
       include_patterns: activeEditor.includePatterns,
       exclude_patterns: activeEditor.excludePatterns,
     }, activeEditor.scope?.revision).then(() => {
+      if (!isActive() || editor !== activeEditor) return;
       navigation.backToSources(activeEditor.source.id);
     }).catch((error) => {
-      if (editor !== activeEditor) return;
+      if (!isActive() || editor !== activeEditor) return;
       activeEditor.saving = false;
       activeEditor.error = errorMessage(error, "同步范围无法保存");
       render();
@@ -282,7 +286,7 @@ export function mountSourceEditor(
       activeEditor.error = undefined;
       render();
       void api.setScopeLifecycle(activeScope.id, lifecycle, activeScope.revision).then((saved) => {
-        if (editor !== activeEditor) return;
+        if (!isActive() || editor !== activeEditor) return;
         if (lifecycle === "deleted") {
           navigation.backToSources(activeEditor.source.id);
           return;
@@ -290,9 +294,9 @@ export function mountSourceEditor(
         activeEditor.scope = saved.scope;
         activeEditor.dirty = false;
       }).catch((error) => {
-        if (editor === activeEditor) activeEditor.error = errorMessage(error, "同步范围状态无法更新");
+        if (isActive() && editor === activeEditor) activeEditor.error = errorMessage(error, "同步范围状态无法更新");
       }).finally(() => {
-        if (editor === activeEditor) {
+        if (isActive() && editor === activeEditor) {
           activeEditor.lifecyclePending = false;
           render();
         }
@@ -353,6 +357,7 @@ export function mountSourceEditor(
     api.listScopes?.() ?? Promise.resolve([]),
     api.listTargets?.() ?? Promise.resolve([]),
   ]).then(([sources, scopes, targets]) => {
+    if (!isActive()) return;
     const source = sources.find((item) => item.id === sourceId);
     if (!source) {
       root.innerHTML = '<section class="focused-editor-page"><p class="editor-error" role="alert">未找到内容来源。</p><button type="button" data-action="back-to-sources">返回内容来源</button></section>';
@@ -362,6 +367,7 @@ export function mountSourceEditor(
     render();
     void loadChildren(editor, ".", api, render);
   }).catch((error) => {
+    if (!isActive()) return;
     root.innerHTML = `<section class="focused-editor-page"><p class="editor-error" role="alert">${escapeHtml(errorMessage(error, "同步范围无法加载"))}</p><button type="button" data-action="back-to-sources">返回内容来源</button></section>`;
   });
 }
@@ -371,14 +377,17 @@ export function mountTargetEditor(
   api: SourcesApi = defaultSourcesApi,
   targetId: string,
   navigation: EditorNavigation,
+  isActive: () => boolean = () => true,
 ): void {
   let editor: TargetEditorState | undefined;
   const render = () => {
+    if (!isActive()) return;
     root.innerHTML = editor
       ? renderTargetEditor(editor)
       : '<section class="focused-editor-page"><p class="sources-status" role="status">正在加载发布目标...</p></section>';
   };
   const back = () => {
+    if (!isActive()) return;
     if (!editor || confirmDiscard(editor)) navigation.backToSources(targetId);
   };
   root.addEventListener("submit", (event) => {
@@ -401,7 +410,7 @@ export function mountTargetEditor(
       posts_directory: activeEditor.form.postsDirectory,
       resources_directory: activeEditor.form.resourcesDirectory,
     }).then(async (saved) => {
-      if (editor !== activeEditor) return;
+      if (!isActive() || editor !== activeEditor) return;
       activeEditor.target = saved;
       activeEditor.dirty = false;
       activeEditor.saving = false;
@@ -411,12 +420,12 @@ export function mountTargetEditor(
       }
       if (api.previewTargetInitialization) {
         const preview = await api.previewTargetInitialization(saved.id);
-        if (editor !== activeEditor) return;
+        if (!isActive() || editor !== activeEditor) return;
         activeEditor.initialization = { files: preview.files };
       }
       render();
     }).catch((error) => {
-      if (editor !== activeEditor) return;
+      if (!isActive() || editor !== activeEditor) return;
       editor = targetEditorSaveFailed(activeEditor, errorMessage(error, "发布配置无法保存"));
       render();
     });
@@ -438,10 +447,10 @@ export function mountTargetEditor(
       activeEditor.error = undefined;
       render();
       void api.initializeTarget(activeEditor.target.id).then((saved) => {
-        if (editor !== activeEditor) return;
+        if (!isActive() || editor !== activeEditor) return;
         navigation.backToSources(saved.id);
       }).catch((error) => {
-        if (editor !== activeEditor) return;
+        if (!isActive() || editor !== activeEditor) return;
         activeEditor.saving = false;
         activeEditor.error = errorMessage(error, "发布目录无法初始化");
         render();
@@ -477,12 +486,14 @@ export function mountTargetEditor(
   });
   render();
   void (api.listTargets?.() ?? Promise.resolve([])).then(async (targets) => {
+    if (!isActive()) return;
     const target = targets.find((item) => item.id === targetId);
     if (!target) {
       root.innerHTML = '<section class="focused-editor-page"><p class="editor-error" role="alert">未找到 GitHub 目标。</p><button type="button" data-action="back-to-sources">返回内容来源</button></section>';
       return;
     }
     const candidates = await (api.inspectTargetConfiguration?.(target.id) ?? Promise.resolve([]));
+    if (!isActive()) return;
     const selected = candidates.find((candidate) => candidate.adapter === target.adapter) ?? candidates[0];
     editor = {
       target,

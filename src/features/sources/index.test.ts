@@ -1,5 +1,5 @@
-import { describe, expect, it, vi } from "vitest";
-import type { ScopeSummary, Source } from "../../contracts";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import type { ConnectedTarget, ScopeSummary, Source } from "../../contracts";
 import {
   addSourceAndReload,
   createRepositoryRefreshController,
@@ -7,6 +7,7 @@ import {
   createTargetConfigurationRequestController,
   formatSourcePath,
   loadSources,
+  mountSources,
   notifyScopesChanged,
   renderResourceOverview,
   renderResources,
@@ -39,6 +40,51 @@ const summary: ScopeSummary = {
   health: "ready",
   diagnostics: [],
 };
+
+class TestFormElement {
+  constructor(readonly id: string) {}
+}
+
+class SourcesDomRoot {
+  innerHTML = "";
+  private submitHandler: ((event: SubmitEvent) => void) | undefined;
+  private clickHandler: ((event: MouseEvent) => void) | undefined;
+
+  addEventListener(type: string, listener: EventListenerOrEventListenerObject): void {
+    if (type === "submit" && typeof listener === "function") {
+      this.submitHandler = listener as (event: SubmitEvent) => void;
+    }
+    if (type === "click" && typeof listener === "function") {
+      this.clickHandler = listener as (event: MouseEvent) => void;
+    }
+  }
+
+  clickAction(action: string): void {
+    expect(this.innerHTML).toContain(`data-action="${action}"`);
+    const target = {
+      dataset: { action },
+      closest: <T extends HTMLElement>(selector: string): T | null =>
+        selector === "[data-action]" ? target as unknown as T : null,
+    };
+    this.clickHandler?.({ target } as unknown as MouseEvent);
+  }
+
+  submit(id: string): void {
+    const form = new TestFormElement(id);
+    this.submitHandler?.({
+      target: form,
+      preventDefault: vi.fn(),
+    } as unknown as SubmitEvent);
+  }
+}
+
+async function flushDomUpdates(): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, 0));
+}
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
 
 describe("sources feature", () => {
   it("returns ready state with sources after loading", async () => {
@@ -221,5 +267,52 @@ describe("sources feature", () => {
       expect(html).toContain('<h1 id="sources-title">内容来源</h1>');
       expect(html).not.toContain("<main");
     }
+  });
+
+  it("does not open a connected target after the Sources mount is no longer active", async () => {
+    vi.stubGlobal("HTMLFormElement", TestFormElement);
+    const root = new SourcesDomRoot();
+    const openTargetEditor = vi.fn();
+    let active = true;
+    let resolveConnectedTarget!: (target: ConnectedTarget) => void;
+    const connectTarget = vi.fn(() => new Promise<ConnectedTarget>((resolve) => {
+      resolveConnectedTarget = resolve;
+    }));
+
+    mountSources(root as unknown as HTMLElement, {
+      listSources: async () => [],
+      listScopes: async () => [],
+      listTargets: async () => [],
+      refreshGithubRepositoryPermissions: async () => [{
+        repository: "owner/blog",
+        default_branch: "main",
+        visibility: "public",
+        description: null,
+      }],
+      connectTarget,
+    }, {
+      openSourceEditor: vi.fn(),
+      openTargetEditor,
+    }, undefined, () => active);
+
+    await flushDomUpdates();
+    root.clickAction("connect-target");
+    await flushDomUpdates();
+    root.submit("connect-target-form");
+    active = false;
+    resolveConnectedTarget({
+      id: "target-1",
+      name: "Blog",
+      repository: "owner/blog",
+      default_branch: "main",
+      visibility: "public",
+      state: "needs_configuration",
+      layout: { posts_directory: "", resources_directory: "" },
+      created_at: source.created_at,
+    });
+    await flushDomUpdates();
+
+    expect(connectTarget).toHaveBeenCalledOnce();
+    expect(openTargetEditor).not.toHaveBeenCalled();
   });
 });

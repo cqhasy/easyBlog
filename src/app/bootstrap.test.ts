@@ -2,11 +2,18 @@ import { describe, expect, it, vi } from "vitest";
 
 vi.mock("./icons", () => ({ hydrateIcons: vi.fn() }));
 
+const releaseBridge = vi.hoisted(() => ({
+  listPublications: vi.fn(),
+  retryRelease: vi.fn(),
+  rollbackPublication: vi.fn(),
+}));
+
+vi.mock("../bridge/releases", () => releaseBridge);
+
 import { createAppController } from "./bootstrap";
 
-class AppDomRoot {
+class AppDomWorkbench {
   innerHTML = "";
-  workbenchHTML = "";
   private clickHandler: ((event: MouseEvent) => void) | undefined;
 
   addEventListener(type: string, listener: EventListenerOrEventListenerObject): void {
@@ -15,18 +22,67 @@ class AppDomRoot {
     }
   }
 
+  clickAction(action: string, batchId?: string): void {
+    expect(this.innerHTML).toContain(`data-action="${action}"`);
+    const dialog = { close: vi.fn() };
+    const target = {
+      dataset: batchId ? { action, batchId } : { action },
+      closest: <T extends HTMLElement>(selector: string): T | null =>
+        selector === "[data-action]" ? target as unknown as T : selector === "dialog" ? dialog as unknown as T : null,
+    };
+    this.clickHandler?.({ target } as unknown as MouseEvent);
+  }
+}
+
+class AppDomRoot {
+  private markup = "";
+  workbench = new AppDomWorkbench();
+  private clickHandler: ((event: MouseEvent) => void) | undefined;
+
+  get innerHTML(): string {
+    return this.markup;
+  }
+
+  set innerHTML(value: string) {
+    this.markup = value;
+    this.workbench = new AppDomWorkbench();
+  }
+
+  get workbenchHTML(): string {
+    return this.workbench.innerHTML;
+  }
+
+  set workbenchHTML(value: string) {
+    this.workbench.innerHTML = value;
+  }
+
+  addEventListener(type: string, listener: EventListenerOrEventListenerObject): void {
+    if (type === "click" && typeof listener === "function") {
+      this.clickHandler = listener as (event: MouseEvent) => void;
+    }
+  }
+
   querySelector<T extends Element>(selector: string): T | null {
-    if (selector !== "[data-app-content]" || !this.innerHTML.includes("data-app-content")) return null;
-    const root = this;
-    return {
-      addEventListener: () => undefined,
-      get innerHTML() {
-        return root.workbenchHTML;
-      },
-      set innerHTML(value: string) {
-        root.workbenchHTML = value;
-      },
-    } as unknown as T;
+    if (selector === "[data-app-content]" && this.innerHTML.includes("data-app-content")) {
+      return this.workbench as unknown as T;
+    }
+    if (selector === ".app-shell" && this.innerHTML.includes('class="app-shell"')) {
+      const root = this;
+      return {
+        setAttribute(name: string, value: string) {
+          if (name === "data-sidebar-mode") {
+            root.markup = root.markup.replace(/data-sidebar-mode="[^"]*"/, `data-sidebar-mode="${value}"`);
+          }
+        },
+      } as unknown as T;
+    }
+    if (selector === '[data-action="toggle-sidebar"]') {
+      return {
+        setAttribute: () => undefined,
+        innerHTML: "",
+      } as unknown as T;
+    }
+    return null;
   }
 
   clickAction(action: string): void {
@@ -52,6 +108,20 @@ class AppDomRoot {
 
 async function flushDomUpdates(): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, 0));
+}
+
+function publishedRecord() {
+  return {
+    batch_id: "batch-published",
+    commit_sha: "published-commit",
+    scope_id: "scope-1",
+    target_id: "target-1",
+    change_ids: ["change-1"],
+    state: "published" as const,
+    published_at: "2026-09-04T08:00:00Z",
+    rollback_commit_sha: null,
+    rolled_back_at: null,
+  };
 }
 
 describe("application bootstrap", () => {
@@ -227,5 +297,58 @@ describe("application bootstrap", () => {
     root.clickAction("toggle-sidebar");
 
     expect(root.innerHTML).toContain('data-sidebar-mode="collapsed"');
+  });
+
+  it("preserves the mounted editor workbench across safe shell updates", async () => {
+    const root = new AppDomRoot();
+    const status = vi.fn().mockResolvedValue({ state: "ready", login: "octocat" });
+    const controller = createAppController(root as unknown as HTMLElement, {
+      githubAuthorizationStatus: status,
+      startGithubLogin: async () => ({ state: "ready", login: "octocat" }),
+    }, 1280);
+
+    await controller.start();
+    const editorWorkbench = root.workbench;
+    root.workbenchHTML = '<input name="scope-name" value="Unsaved draft" />';
+
+    controller.setViewportWidth(960);
+    root.clickAction("toggle-sidebar");
+    await controller.revalidateAuthorization();
+
+    expect(root.workbench).toBe(editorWorkbench);
+    expect(root.workbenchHTML).toContain('value="Unsaved draft"');
+  });
+
+  it.each([
+    ["a resize", (controller: ReturnType<typeof createAppController>, _root: AppDomRoot) => controller.setViewportWidth(960)],
+    ["a sidebar toggle", (controller: ReturnType<typeof createAppController>, root: AppDomRoot) => root.clickAction("toggle-sidebar")],
+    ["ready-state revalidation", (controller: ReturnType<typeof createAppController>, _root: AppDomRoot) => controller.revalidateAuthorization()],
+  ])("keeps a pending rollback guarded through %s", async (_label, trigger) => {
+    releaseBridge.listPublications.mockReset();
+    releaseBridge.retryRelease.mockReset();
+    releaseBridge.rollbackPublication.mockReset();
+    releaseBridge.listPublications.mockResolvedValue([publishedRecord()]);
+    let resolveRollback!: (value: string) => void;
+    releaseBridge.rollbackPublication.mockImplementation(() => new Promise<string>((resolve) => {
+      resolveRollback = resolve;
+    }));
+
+    const root = new AppDomRoot();
+    const controller = createAppController(root as unknown as HTMLElement, {
+      githubAuthorizationStatus: async () => ({ state: "ready", login: "octocat" }),
+      startGithubLogin: async () => ({ state: "ready", login: "octocat" }),
+    }, 1280);
+
+    await controller.start();
+    controller.navigate("history");
+    await flushDomUpdates();
+    root.workbench.clickAction("confirm-rollback", "batch-published");
+
+    await trigger(controller, root);
+    await flushDomUpdates();
+    root.workbench.clickAction("confirm-rollback", "batch-published");
+
+    expect(releaseBridge.rollbackPublication).toHaveBeenCalledOnce();
+    resolveRollback("reverse-commit");
   });
 });

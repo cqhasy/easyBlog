@@ -63,11 +63,14 @@ export function createAppController(
   let authorizationGeneration = 0;
   let activeLoginGeneration: number | undefined;
   let sourcesResourceId: string | undefined;
+  let pageGeneration = 0;
 
   const renderCurrentPage = () => {
     const content = root.querySelector<HTMLElement>("[data-app-content]");
     if (!content) return;
     const view = viewState.current();
+    const currentPageGeneration = ++pageGeneration;
+    const isCurrentPage = () => currentPageGeneration === pageGeneration;
     if (view.page === "dashboard") {
       content.innerHTML = renderDashboard();
       return;
@@ -79,36 +82,40 @@ export function createAppController(
     if (view.page === "sources") {
       mountSources(content, undefined, {
         openSourceEditor: (sourceId, scopeId) => {
+          if (!isCurrentPage()) return;
           sourcesResourceId = sourceId;
           viewState.navigate({ page: "source-editor", sourceId, scopeId });
           render();
         },
         openTargetEditor: (targetId) => {
+          if (!isCurrentPage()) return;
           sourcesResourceId = targetId;
           viewState.navigate({ page: "target-editor", targetId });
           render();
         },
-      }, sourcesResourceId);
+      }, sourcesResourceId, isCurrentPage);
       return;
     }
     if (view.page === "source-editor") {
       mountSourceEditor(content, undefined, view.sourceId, view.scopeId, {
         backToSources: (resourceId) => {
+          if (!isCurrentPage()) return;
           sourcesResourceId = resourceId;
           viewState.navigate({ page: "sources" });
           render();
         },
-      });
+      }, isCurrentPage);
       return;
     }
     if (view.page === "target-editor") {
       mountTargetEditor(content, undefined, view.targetId, {
         backToSources: (resourceId) => {
+          if (!isCurrentPage()) return;
           sourcesResourceId = resourceId;
           viewState.navigate({ page: "sources" });
           render();
         },
-      });
+      }, isCurrentPage);
       return;
     }
     if (view.page === "settings") {
@@ -120,6 +127,7 @@ export function createAppController(
 
   const render = () => {
     if (startupState.kind !== "ready") {
+      pageGeneration += 1;
       root.innerHTML = renderStartupSurface(startupState);
       return;
     }
@@ -131,17 +139,38 @@ export function createAppController(
     renderCurrentPage();
   };
 
+  const updateSidebarMode = () => {
+    const shell = root.querySelector<HTMLElement>(".app-shell");
+    const toggle = root.querySelector<HTMLElement>('[data-action="toggle-sidebar"]');
+    if (!shell || !toggle) {
+      render();
+      return;
+    }
+    const sidebarMode = resolveSidebarMode(viewState.sidebarPreference(), viewportWidth);
+    const expanded = sidebarMode === "expanded";
+    shell.setAttribute("data-sidebar-mode", sidebarMode);
+    toggle.setAttribute("aria-label", expanded ? "Collapse sidebar" : "Expand sidebar");
+    toggle.setAttribute("title", expanded ? "Collapse sidebar" : "Expand sidebar");
+    toggle.innerHTML = `<i data-lucide="${expanded ? "panel-left-close" : "panel-left-open"}"></i>`;
+    hydrateIcons();
+  };
+
   const transition = (event: Parameters<typeof reduceStartupState>[1]) => {
     startupState = reduceStartupState(startupState, event);
     render();
   };
 
-  const checkAuthorization = async (generation: number): Promise<void> => {
-    transition({ type: "begin-check" });
+  const checkAuthorization = async (generation: number, preserveReadyShell = false): Promise<void> => {
+    const keepReadyShell = preserveReadyShell && startupState.kind === "ready";
+    if (!keepReadyShell) transition({ type: "begin-check" });
     try {
       const nextAuthorization = await dependencies.githubAuthorizationStatus();
       if (generation !== authorizationGeneration) return;
       authorization = nextAuthorization;
+      if (keepReadyShell && authorization.state === "ready") {
+        if (viewState.current().page === "account") renderCurrentPage();
+        return;
+      }
       transition({ type: "authorization-checked", authorization });
     } catch {
       if (generation !== authorizationGeneration) return;
@@ -180,7 +209,7 @@ export function createAppController(
     revalidateAuthorization: async () => {
       if (activeLoginGeneration !== undefined) return;
       const generation = ++authorizationGeneration;
-      await checkAuthorization(generation);
+      await checkAuthorization(generation, startupState.kind === "ready");
     },
     navigate: (page) => {
       viewState.navigate({ page });
@@ -190,11 +219,13 @@ export function createAppController(
       viewState.setSidebarPreference(
         viewState.sidebarPreference() === "expanded" ? "collapsed" : "expanded",
       );
-      render();
+      if (startupState.kind === "ready") updateSidebarMode();
+      else render();
     },
     setViewportWidth: (nextViewportWidth) => {
       viewportWidth = nextViewportWidth;
-      render();
+      if (startupState.kind === "ready") updateSidebarMode();
+      else render();
     },
   };
 
