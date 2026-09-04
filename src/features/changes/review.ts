@@ -8,8 +8,8 @@ import type { ChangesApi } from "./index";
 export type ReviewState =
   | { status: "loading" }
   | { status: "ready"; scope: ScopeSummary; selectedChanges: Change[]; activeChangeId: string; activeView: "summary" | "markdown" | "diff" }
-  | { status: "previewing"; scope: ScopeSummary; selectedChanges: Change[]; activeChangeId: string }
-  | { status: "preview"; scope: ScopeSummary; selectedChanges: Change[]; activeChangeId: string; plan: ReleasePlan; target: ConnectedTarget }
+  | { status: "previewing"; scope: ScopeSummary; selectedChanges: Change[]; activeChangeId: string; activeView: "summary" | "markdown" | "diff" }
+  | { status: "preview"; scope: ScopeSummary; selectedChanges: Change[]; activeChangeId: string; activeView: "diff"; returnView: "summary" | "markdown" | "diff"; plan: ReleasePlan; target: ConnectedTarget }
   | { status: "publishing"; plan: ReleasePlan; target: ConnectedTarget }
   | { status: "published"; plan: ReleasePlan; publication: Publication }
   | { status: "error"; message: string; recovery: "retry-preview" | "open-sources" | "back-to-changes" };
@@ -84,6 +84,18 @@ function renderSequence(state: SelectedReviewState): string {
   return `<aside class="review-sequence" aria-label="本次评审变更"><header><span>${state.selectedChanges.length} 项</span></header><ol>${state.selectedChanges.map((change) => `<li><button type="button" data-action="select-review-change" data-change-id="${escapeHtml(change.id)}" ${change.id === state.activeChangeId ? 'aria-current="true"' : ""}><strong>${escapeHtml(titleFor(change))}</strong><span>${escapeHtml(changeKindLabels[change.kind])}</span></button></li>`).join("")}</ol></aside>`;
 }
 
+function renderReviewPosition(state: SelectedReviewState): string {
+  const activeIndex = Math.max(0, state.selectedChanges.findIndex((change) => change.id === state.activeChangeId));
+  return `<span class="review-position">第 ${activeIndex + 1} / ${state.selectedChanges.length} 项</span>`;
+}
+
+function renderReviewNavigation(state: SelectedReviewState, disabled = false): string {
+  const activeIndex = state.selectedChanges.findIndex((change) => change.id === state.activeChangeId);
+  const previousDisabled = disabled || activeIndex <= 0;
+  const nextDisabled = disabled || activeIndex >= state.selectedChanges.length - 1;
+  return `<div class="review-step-actions"><button type="button" class="secondary-button" data-action="previous-review-change" ${previousDisabled ? "disabled" : ""}>上一个</button><button type="button" class="secondary-button" data-action="next-review-change" ${nextDisabled ? "disabled" : ""}>下一个</button></div>`;
+}
+
 function renderTabs(activeView: ReviewView): string {
   return `<div class="review-tabs" role="tablist" aria-label="评审视图">${reviewViews.map((view) => {
     const label = view === "summary" ? "概览" : view === "markdown" ? "Markdown" : "差异";
@@ -126,14 +138,14 @@ export function renderChangeReview(state: ReviewState): string {
   if (state.status === "publishing") return `<section class="review-page" aria-labelledby="review-publishing-title"><section class="review-recovery" role="status"><h1 id="review-publishing-title">正在发布</h1><p>正在向 ${escapeHtml(state.target.repository)} 推送已确认的预览。</p></section></section>`;
 
   const activeChange = activeFrom(state);
-  const activeView: ReviewView = state.status === "ready" ? state.activeView : state.status === "preview" ? "diff" : "summary";
+  const activeView: ReviewView = state.status === "ready" || state.status === "previewing" || state.status === "preview" ? state.activeView : "summary";
   const titleId = state.status === "ready" ? "review-ready-title" : state.status === "previewing" ? "review-previewing-title" : "review-preview-title";
   const title = state.status === "ready" ? `发布评审：${state.scope.scope.name}` : state.status === "previewing" ? `正在生成发布预览：${state.scope.scope.name}` : `发布预览：${state.scope.scope.name}`;
   const plan = state.status === "preview" ? state.plan : undefined;
   const summary = state.status === "preview"
-    ? `<footer class="review-actions"><span>${state.plan.diffs.length} 个目标文件</span><button type="button" class="review-primary-button" data-action="open-publish-dialog">确认发布</button></footer>${renderPublishDialog(state.plan, state.target)}`
-    : `<footer class="review-actions"><span>${state.selectedChanges.length} 项变更待确认</span>${state.status === "previewing" ? '<p class="review-operation" role="status" aria-live="polite">正在生成发布预览...</p>' : ""}<button type="button" class="review-primary-button" data-action="preview-release" ${state.status === "previewing" ? "disabled" : ""}>${state.status === "previewing" ? "正在生成预览..." : "预览发布"}</button></footer>`;
-  return `<section class="review-page" aria-labelledby="${titleId}"><header class="review-header"><button type="button" class="secondary-button" data-action="back-to-changes">返回变更</button><div><p class="eyebrow">发布评审</p><h1 id="${titleId}">${escapeHtml(title)}</h1></div></header><div class="review-layout">${renderSequence(state)}<section class="review-pane">${renderTabs(activeView)}${renderActiveContent(activeChange, activeView, plan)}${summary}</section></div></section>`;
+    ? `<footer class="review-actions"><span>${state.plan.diffs.length} 个目标文件</span><button type="button" class="secondary-button" data-action="return-to-review">返回评审</button><button type="button" class="review-primary-button" data-action="open-publish-dialog">确认发布</button></footer>${renderPublishDialog(state.plan, state.target)}`
+    : `<footer class="review-actions"><span>${state.selectedChanges.length} 项变更待确认</span>${renderReviewNavigation(state, state.status === "previewing")}${state.status === "previewing" ? '<p class="review-operation" role="status" aria-live="polite">正在生成发布预览...</p>' : ""}<button type="button" class="review-primary-button" data-action="preview-release" ${state.status === "previewing" ? "disabled" : ""}>${state.status === "previewing" ? "正在生成预览..." : "预览发布"}</button></footer>`;
+  return `<section class="review-page" aria-labelledby="${titleId}"><header class="review-header"><button type="button" class="secondary-button" data-action="back-to-changes">返回变更</button><div><p class="eyebrow">发布评审</p><h1 id="${titleId}">${escapeHtml(title)}</h1></div>${renderReviewPosition(state)}</header><div class="review-layout">${renderSequence(state)}<section class="review-pane">${renderTabs(activeView)}${renderActiveContent(activeChange, activeView, plan)}${summary}</section></div></section>`;
 }
 
 export function mountChangeReview(
@@ -231,7 +243,8 @@ export function mountChangeReview(
     const previous = state.status === "ready" || state.status === "previewing" || state.status === "preview" ? state : undefined;
     const activeChangeId = previous?.activeChangeId ?? reviewChanges[0].id;
     const currentGeneration = ++generation;
-    state = { status: "previewing", scope: reviewScope, selectedChanges: reviewChanges, activeChangeId };
+    const returnView = previous?.status === "preview" ? previous.returnView : previous?.activeView ?? activeView;
+    state = { status: "previewing", scope: reviewScope, selectedChanges: reviewChanges, activeChangeId, activeView: returnView };
     render();
     void api.previewRelease({ scope_id: reviewScope.scope.id, change_ids: reviewChanges.map((change) => change.id) }).then(async (plan) => {
       const targets = await (api.listTargets?.() ?? Promise.resolve([]));
@@ -242,7 +255,7 @@ export function mountChangeReview(
         render();
         return;
       }
-      state = { status: "preview", scope: reviewScope!, selectedChanges: reviewChanges, activeChangeId, plan, target };
+      state = { status: "preview", scope: reviewScope!, selectedChanges: reviewChanges, activeChangeId, activeView: "diff", returnView, plan, target };
       render();
     }).catch((error) => {
       if (currentGeneration !== generation) return;
@@ -257,10 +270,32 @@ export function mountChangeReview(
     if (action === "back-to-changes") { navigation.backToChanges(backContext()); return; }
     if (action === "open-sources") { navigation.openSources(); return; }
     if (action === "retry-preview" || action === "preview-release") { startPreview(); return; }
-    if (action === "select-review-change" && (state.status === "ready" || state.status === "previewing" || state.status === "preview")) {
+    if (action === "return-to-review" && state.status === "preview") {
+      state = {
+        status: "ready",
+        scope: state.scope,
+        selectedChanges: state.selectedChanges,
+        activeChangeId: state.activeChangeId,
+        activeView: state.returnView,
+      };
+      render();
+      return;
+    }
+    const reviewState = state.status === "ready" || state.status === "previewing" || state.status === "preview" ? state : undefined;
+    if (action === "select-review-change" && reviewState) {
       const activeChangeId = actionElement?.dataset.changeId;
-      if (!activeChangeId || !state.selectedChanges.some((change) => change.id === activeChangeId)) return;
-      state = { ...state, activeChangeId };
+      if (!activeChangeId || !reviewState.selectedChanges.some((change) => change.id === activeChangeId)) return;
+      state = { ...reviewState, activeChangeId };
+      render();
+      return;
+    }
+    const readyState = state.status === "ready" ? state : undefined;
+    if ((action === "previous-review-change" || action === "next-review-change") && readyState) {
+      const activeIndex = readyState.selectedChanges.findIndex((change) => change.id === readyState.activeChangeId);
+      const offset = action === "previous-review-change" ? -1 : 1;
+      const nextChange = readyState.selectedChanges[activeIndex + offset];
+      if (!nextChange) return;
+      state = { ...readyState, activeChangeId: nextChange.id };
       render();
       return;
     }

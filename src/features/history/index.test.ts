@@ -70,6 +70,8 @@ describe("history", () => {
     expect(html).not.toContain('data-action="rollback"');
     expect(renderRollbackDialog(record)).toContain('data-action="confirm-rollback"');
     expect(renderRollbackDialog(record)).toContain(record.commit_sha);
+    expect(renderRollbackDialog(record)).toContain("受影响内容");
+    expect(renderRollbackDialog(record)).toContain("2 项");
     expect(renderRollbackDialog(record)).toContain('role="dialog" aria-modal="true"');
     expect(renderRollbackDialog(record)).toContain(`aria-describedby="rollback-description-${record.batch_id}"`);
   });

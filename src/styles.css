@@ -214,6 +214,7 @@ button:active { transform: translateY(1px); }
 .review-page { margin: 0 auto; max-width: 1240px; padding: 40px 38px 72px; }
 .review-header { align-items: center; border-bottom: 1px solid var(--border); display: flex; gap: 18px; padding-bottom: 18px; }
 .review-header h1 { font-size: 24px; margin: 0; }
+.review-position { color: var(--muted); font-family: "Cascadia Mono", Consolas, monospace; font-size: 11px; margin-left: auto; white-space: nowrap; }
 .review-layout { display: grid; grid-template-columns: minmax(190px, .42fr) minmax(0, 1fr); min-height: 590px; }
 .review-sequence { border-right: 1px solid var(--border); padding: 18px 16px 18px 0; }
 .review-sequence header { color: var(--muted); font-size: 11px; font-weight: 700; margin-bottom: 10px; }
@@ -245,6 +246,7 @@ button:active { transform: translateY(1px); }
 .review-diffs pre { border: 0; max-height: 340px; }
 .review-actions { align-items: center; border-top: 1px solid var(--border); display: flex; gap: 14px; justify-content: flex-end; min-height: 64px; }
 .review-actions > span { color: var(--muted); font-size: 12px; margin-right: auto; }
+.review-step-actions { display: flex; gap: 8px; }
 .review-loading, .review-recovery, .review-published { color: var(--muted); margin: 0 auto; max-width: 620px; padding-top: 110px; }
 .review-recovery h1, .review-published h1 { font-size: 24px; }
 .review-recovery p, .review-published p { font-size: 13px; line-height: 1.55; }

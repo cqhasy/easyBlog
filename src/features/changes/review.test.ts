@@ -46,9 +46,13 @@ const publication: Publication = {
 class ReviewDomRoot {
   innerHTML = "";
   focusedReviewView: string | undefined;
+  private clickHandler: ((event: MouseEvent) => void) | undefined;
   private keydownHandler: ((event: KeyboardEvent) => void) | undefined;
 
   addEventListener(type: string, listener: EventListenerOrEventListenerObject): void {
+    if (type === "click" && typeof listener === "function") {
+      this.clickHandler = listener as (event: MouseEvent) => void;
+    }
     if (type === "keydown" && typeof listener === "function") {
       this.keydownHandler = listener as (event: KeyboardEvent) => void;
     }
@@ -73,6 +77,16 @@ class ReviewDomRoot {
     this.keydownHandler?.({ key, preventDefault, target: tab } as unknown as KeyboardEvent);
     return preventDefault;
   }
+
+  clickAction(action: string, attributes: Record<string, string> = {}): void {
+    expect(this.innerHTML).toContain(`data-action="${action}"`);
+    const target = {
+      dataset: { action, ...attributes },
+      closest: <T extends HTMLElement>(selector: string): T | null =>
+        selector === "[data-action]" ? target as unknown as T : null,
+    };
+    this.clickHandler?.({ target } as unknown as MouseEvent);
+  }
 }
 
 async function flushDomUpdates(): Promise<void> {
@@ -95,6 +109,7 @@ describe("focused change review", () => {
       scope,
       selectedChanges: [change("added", "a")],
       activeChangeId: "a",
+      activeView: "summary",
     });
 
     expect(html).toContain('role="tablist"');
@@ -107,8 +122,8 @@ describe("focused change review", () => {
     const states: Array<[ReviewState, string]> = [
       [{ status: "loading" }, "review-loading-title"],
       [reviewState([change("added", "a")], "a"), "review-ready-title"],
-      [{ status: "previewing", scope, selectedChanges: [change("added", "a")], activeChangeId: "a" }, "review-previewing-title"],
-      [{ status: "preview", scope, selectedChanges: [change("added", "a")], activeChangeId: "a", plan: plan("batch-1"), target }, "review-preview-title"],
+      [{ status: "previewing", scope, selectedChanges: [change("added", "a")], activeChangeId: "a", activeView: "summary" }, "review-previewing-title"],
+      [{ status: "preview", scope, selectedChanges: [change("added", "a")], activeChangeId: "a", activeView: "diff", returnView: "summary", plan: plan("batch-1"), target }, "review-preview-title"],
       [{ status: "publishing", plan: plan("batch-1"), target }, "review-publishing-title"],
       [{ status: "published", plan: plan("batch-1"), publication }, "review-published-title"],
       [{ status: "error", message: "预览失败", recovery: "retry-preview" }, "review-error-title"],
@@ -149,6 +164,63 @@ describe("focused change review", () => {
     expect(root.focusedReviewView).toBe("summary");
   });
 
+  it("shows batch position and moves through the selected sequence with previous and next actions", async () => {
+    const root = new ReviewDomRoot();
+
+    mountChangeReview(
+      root as unknown as HTMLElement,
+      {
+        listScopes: async () => [scope],
+        listChanges: async () => [change("added", "a"), change("updated", "b")],
+        listTargets: async () => [target],
+      },
+      { scopeId: scope.scope.id, selectedChangeIds: ["a", "b"], activeChangeId: "a" },
+      { backToChanges: () => undefined, openSources: () => undefined },
+    );
+
+    await flushDomUpdates();
+
+    expect(root.innerHTML).toContain("第 1 / 2 项");
+    expect(root.innerHTML).toContain('data-action="previous-review-change" disabled');
+    root.clickAction("next-review-change");
+
+    expect(root.innerHTML).toContain("第 2 / 2 项");
+    expect(root.innerHTML).toContain('data-change-id="b" aria-current="true"');
+    expect(root.innerHTML).toContain('data-action="next-review-change" disabled');
+    root.clickAction("previous-review-change");
+
+    expect(root.innerHTML).toContain('data-change-id="a" aria-current="true"');
+  });
+
+  it("returns from preview to the same selected item and review tab", async () => {
+    const root = new ReviewDomRoot();
+
+    mountChangeReview(
+      root as unknown as HTMLElement,
+      {
+        listScopes: async () => [scope],
+        listChanges: async () => [change("added", "a"), change("updated", "b")],
+        listTargets: async () => [target],
+        previewRelease: async () => plan("batch-1"),
+      },
+      { scopeId: scope.scope.id, selectedChangeIds: ["a", "b"], activeChangeId: "b" },
+      { backToChanges: () => undefined, openSources: () => undefined },
+    );
+
+    await flushDomUpdates();
+    root.clickAction("change-review-view", { reviewView: "markdown" });
+    root.clickAction("preview-release");
+    await flushDomUpdates();
+    await flushDomUpdates();
+
+    expect(root.innerHTML).toContain('data-action="return-to-review"');
+    expect(root.innerHTML).toContain("@@ -1 +1 @@");
+    root.clickAction("return-to-review");
+
+    expect(root.innerHTML).toContain('data-change-id="b" aria-current="true"');
+    expect(root.innerHTML).toContain('data-review-view="markdown" aria-selected="true" tabindex="0"');
+  });
+
   it("localizes change kinds in the review sequence and summary", () => {
     const html = renderChangeReview(reviewState([
       change("added", "a"),
@@ -185,6 +257,8 @@ describe("focused change review", () => {
       scope,
       selectedChanges: [change("updated", "a")],
       activeChangeId: "a",
+      activeView: "diff",
+      returnView: "summary",
       plan: plan("batch-1"),
       target,
     });
