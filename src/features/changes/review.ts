@@ -2,7 +2,7 @@ import { listChanges } from "../../bridge/changes";
 import { previewRelease, publishRelease } from "../../bridge/releases";
 import { listScopes } from "../../bridge/sources";
 import { listTargets } from "../../bridge/targets";
-import type { Change, ConnectedTarget, Publication, ReleasePlan, ScopeId, ScopeSummary } from "../../contracts";
+import type { Change, ChangeKind, ConnectedTarget, FileChangeKind, Publication, ReleasePlan, ScopeId, ScopeSummary } from "../../contracts";
 import type { ChangesApi } from "./index";
 
 export type ReviewState =
@@ -28,6 +28,21 @@ export type ReviewNavigation = {
 export type ReviewApi = Pick<ChangesApi, "listScopes" | "listChanges" | "listTargets"> & {
   previewRelease?: (input: { scope_id: ScopeId; change_ids: string[] }) => Promise<ReleasePlan>;
   publishRelease?: (input: { batch_id: string }) => Promise<Publication>;
+};
+
+const changeKindLabels: Record<ChangeKind, string> = {
+  added: "新增",
+  updated: "更新",
+  moved: "移动",
+  deleted: "删除",
+  blocked: "需要处理",
+};
+
+const fileChangeKindLabels: Record<FileChangeKind, string> = {
+  added: "新增",
+  modified: "修改",
+  deleted: "删除",
+  unchanged: "未变化",
 };
 
 function escapeHtml(value: string): string {
@@ -63,7 +78,7 @@ function activeFrom(state: SelectedReviewState): Change | undefined {
 }
 
 function renderSequence(state: SelectedReviewState): string {
-  return `<aside class="review-sequence" aria-label="本次评审变更"><header><span>${state.selectedChanges.length} 项</span></header><ol>${state.selectedChanges.map((change) => `<li><button type="button" data-action="select-review-change" data-change-id="${escapeHtml(change.id)}" ${change.id === state.activeChangeId ? 'aria-current="true"' : ""}><strong>${escapeHtml(titleFor(change))}</strong><span>${escapeHtml(change.kind)}</span></button></li>`).join("")}</ol></aside>`;
+  return `<aside class="review-sequence" aria-label="本次评审变更"><header><span>${state.selectedChanges.length} 项</span></header><ol>${state.selectedChanges.map((change) => `<li><button type="button" data-action="select-review-change" data-change-id="${escapeHtml(change.id)}" ${change.id === state.activeChangeId ? 'aria-current="true"' : ""}><strong>${escapeHtml(titleFor(change))}</strong><span>${escapeHtml(changeKindLabels[change.kind])}</span></button></li>`).join("")}</ol></aside>`;
 }
 
 function renderTabs(activeView: "summary" | "markdown" | "diff"): string {
@@ -86,13 +101,13 @@ function renderActiveContent(change: Change | undefined, view: "summary" | "mark
   if (view === "diff") {
     const matchingDiffs = plan?.diffs.filter((diff) => diff.path === change.source_path) ?? [];
     const displayedDiffs = matchingDiffs.length ? matchingDiffs : plan?.diffs ?? [];
-    return `<section class="review-content"><h2>${escapeHtml(titleFor(change))}</h2>${displayedDiffs.length ? `<div class="review-diffs">${displayedDiffs.map((diff) => `<article><header><strong>${escapeHtml(diff.path)}</strong><span>${escapeHtml(diff.kind)}</span></header><pre>${escapeHtml(diff.patch)}</pre></article>`).join("")}</div>` : `<p class="review-muted">生成预览后，这里会显示持久化的文件差异。</p>`}</section>`;
+    return `<section class="review-content"><h2>${escapeHtml(titleFor(change))}</h2>${displayedDiffs.length ? `<div class="review-diffs">${displayedDiffs.map((diff) => `<article><header><strong>${escapeHtml(diff.path)}</strong><span>${escapeHtml(fileChangeKindLabels[diff.kind])}</span></header><pre>${escapeHtml(diff.patch)}</pre></article>`).join("")}</div>` : `<p class="review-muted">生成预览后，这里会显示持久化的文件差异。</p>`}</section>`;
   }
-  return `<section class="review-content"><p class="eyebrow">${escapeHtml(change.kind)}</p><h2>${escapeHtml(titleFor(change))}</h2><dl class="review-facts"><div><dt>来源路径</dt><dd>${escapeHtml(change.source_path)}</dd></div><div><dt>变更类型</dt><dd>${escapeHtml(change.kind)}</dd></div>${change.previous_path ? `<div><dt>原路径</dt><dd>${escapeHtml(change.previous_path)}</dd></div>` : ""}</dl><p class="review-note">${escapeHtml(changeNote(change))}</p></section>`;
+  return `<section class="review-content"><p class="eyebrow">${escapeHtml(changeKindLabels[change.kind])}</p><h2>${escapeHtml(titleFor(change))}</h2><dl class="review-facts"><div><dt>来源路径</dt><dd>${escapeHtml(change.source_path)}</dd></div><div><dt>变更类型</dt><dd>${escapeHtml(changeKindLabels[change.kind])}</dd></div>${change.previous_path ? `<div><dt>原路径</dt><dd>${escapeHtml(change.previous_path)}</dd></div>` : ""}</dl><p class="review-note">${escapeHtml(changeNote(change))}</p></section>`;
 }
 
 export function renderPublishDialog(plan: ReleasePlan, target: ConnectedTarget): string {
-  return `<dialog data-publish-dialog aria-labelledby="publish-title"><form method="dialog" class="publish-dialog"><header><p class="eyebrow">EASYBLOG / PUBLISH</p><h2 id="publish-title">确认发布</h2></header><dl><div><dt>仓库</dt><dd>${escapeHtml(target.repository)}</dd></div><div><dt>分支</dt><dd>${escapeHtml(target.default_branch)}</dd></div><div><dt>已选变更</dt><dd>${plan.batch.change_ids.length} 项</dd></div><div><dt>受影响文件</dt><dd>${plan.diffs.length} 个</dd></div></dl><footer><button type="button" class="secondary-button" data-action="cancel-publish">取消</button><button type="button" data-action="confirm-publish" data-batch-id="${escapeHtml(plan.batch.id)}">确认发布</button></footer></form></dialog>`;
+  return `<dialog data-publish-dialog aria-labelledby="publish-title"><form method="dialog" class="publish-dialog"><header><p class="eyebrow">EASYBLOG / PUBLISH</p><h2 id="publish-title">确认发布</h2></header><dl><div><dt>仓库</dt><dd>${escapeHtml(target.repository)}</dd></div><div><dt>分支</dt><dd>${escapeHtml(target.default_branch)}</dd></div><div><dt>已选变更</dt><dd>${plan.batch.change_ids.length} 项</dd></div><div><dt>受影响文件</dt><dd>${plan.diffs.length} 个</dd></div></dl><footer><button type="button" class="secondary-button" data-action="cancel-publish">取消</button><button type="button" class="review-primary-button" data-action="confirm-publish" data-batch-id="${escapeHtml(plan.batch.id)}">确认发布</button></footer></form></dialog>`;
 }
 
 export function renderChangeReview(state: ReviewState): string {
@@ -109,8 +124,8 @@ export function renderChangeReview(state: ReviewState): string {
   const activeView = state.status === "ready" ? state.activeView : state.status === "preview" ? "diff" : "summary";
   const plan = state.status === "preview" ? state.plan : undefined;
   const summary = state.status === "preview"
-    ? `<footer class="review-actions"><span>${state.plan.diffs.length} 个目标文件</span><button type="button" data-action="open-publish-dialog">确认发布</button></footer>${renderPublishDialog(state.plan, state.target)}`
-    : `<footer class="review-actions"><span>${state.selectedChanges.length} 项变更待确认</span><button type="button" data-action="preview-release" ${state.status === "previewing" ? "disabled" : ""}>${state.status === "previewing" ? "正在生成预览..." : "预览发布"}</button></footer>`;
+    ? `<footer class="review-actions"><span>${state.plan.diffs.length} 个目标文件</span><button type="button" class="review-primary-button" data-action="open-publish-dialog">确认发布</button></footer>${renderPublishDialog(state.plan, state.target)}`
+    : `<footer class="review-actions"><span>${state.selectedChanges.length} 项变更待确认</span><button type="button" class="review-primary-button" data-action="preview-release" ${state.status === "previewing" ? "disabled" : ""}>${state.status === "previewing" ? "正在生成预览..." : "预览发布"}</button></footer>`;
   return `<main class="review-page"><header class="review-header"><button type="button" class="secondary-button" data-action="back-to-changes">返回变更</button><div><p class="eyebrow">EASYBLOG / RELEASE REVIEW</p><h1>${escapeHtml(state.scope.scope.name)}</h1></div></header><div class="review-layout">${renderSequence(state)}<section class="review-pane">${renderTabs(activeView)}${renderActiveContent(activeChange, activeView, plan)}${summary}</section></div></main>`;
 }
 

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { createChangesRefreshController, defaultSelectedChanges, groupChanges, loadChanges, reconcileSelectedChangeIds, renderChanges, selectableChanges } from "./index";
+import { createChangesRefreshController, defaultSelectedChanges, groupChanges, loadChanges, mountChanges, reconcileSelectedChangeIds, renderChanges, selectableChanges } from "./index";
 import type { Change, ScopeSummary } from "../../contracts";
 
 const scope: ScopeSummary = {
@@ -10,6 +10,31 @@ const scope: ScopeSummary = {
 
 function change(kind: Change["kind"], id: string = kind): Change {
   return { id, scope_id: "scope-1", kind, source_identity: `${id}.md`, source_path: `${id}.md`, previous_path: kind === "moved" ? "old.md" : null, title: id, selected: kind !== "deleted" && kind !== "blocked", blocked_reason: kind === "blocked" ? "无法解析内容" : null, snapshot: null };
+}
+
+class ChangesDomRoot {
+  innerHTML = "";
+  private clickHandler: ((event: MouseEvent) => void) | undefined;
+
+  addEventListener(type: string, listener: EventListenerOrEventListenerObject): void {
+    if (type === "click" && typeof listener === "function") {
+      this.clickHandler = listener as (event: MouseEvent) => void;
+    }
+  }
+
+  clickAction(action: string): void {
+    expect(this.innerHTML).toContain(`data-action="${action}"`);
+    this.clickHandler?.({
+      target: {
+        closest: <T extends HTMLElement>(selector: string): T | null =>
+          selector === "[data-action]" ? { dataset: { action } } as unknown as T : null,
+      },
+    } as unknown as MouseEvent);
+  }
+}
+
+async function flushDomUpdates(): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, 0));
 }
 
 describe("changes workspace", () => {
@@ -45,6 +70,34 @@ describe("changes workspace", () => {
     expect(html).toContain("进入评审</button>");
     expect(html).toContain('data-action="open-review"');
     expect(html).not.toContain('data-action="preview"');
+  });
+
+  it("opens review in the explicit selected order rather than backend list order", async () => {
+    const root = new ChangesDomRoot();
+    let reviewContext: { scopeId: string; selectedChangeIds: string[]; activeChangeId: string } | undefined;
+
+    mountChanges(
+      root as unknown as HTMLElement,
+      {
+        listScopes: async () => [scope],
+        listChanges: async () => [change("added", "a"), change("updated", "b")],
+        scanScope: async () => ({ changes: [], scanned_at: "now" }),
+      },
+      {
+        openReview: (context) => { reviewContext = context; },
+        openSources: () => undefined,
+      },
+      { scopeId: scope.scope.id, selectedChangeIds: ["b", "a"] },
+    );
+
+    await flushDomUpdates();
+    root.clickAction("open-review");
+
+    expect(reviewContext).toEqual({
+      scopeId: "scope-1",
+      selectedChangeIds: ["b", "a"],
+      activeChangeId: "b",
+    });
   });
 
   it("loads persisted changes for the first active scope", async () => {

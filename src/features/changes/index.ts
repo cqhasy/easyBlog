@@ -117,7 +117,7 @@ export function renderChanges(state: ChangesState, selected = new Set<string>(),
     : `<div class="changes-list">${renderGroups(state.changes, selected)}</div>`;
   const scopeOptions = (scopes.length ? scopes : [state.scope]).map((summary) => `<option value="${escapeHtml(summary.scope.id)}" ${summary.scope.id === state.scope.scope.id ? "selected" : ""}>${escapeHtml(summary.scope.name)}</option>`).join("");
   const selectionAction = selectedChanges.length
-    ? `<footer class="selection-region" aria-label="已选变更操作"><span>已选择 ${selectedChanges.length} 项</span><button type="button" data-action="open-review">进入评审</button></footer>`
+    ? `<footer class="selection-region" aria-label="已选变更操作"><span>已选择 ${selectedChanges.length} 项</span><button type="button" class="review-primary-button" data-action="open-review">进入评审</button></footer>`
     : "";
   return `<main class="changes-page" aria-labelledby="changes-title">${header}<section class="changes-toolbar" aria-label="检测控制"><div><label for="changes-scope">检测范围</label><select id="changes-scope" data-action="change-scope" ${scanning ? "disabled" : ""}>${scopeOptions}</select><span>${changeCount ? `发现 ${changeCount} 项待确认变更` : "检查此范围的新变化"}</span></div><button type="button" data-action="scan" ${scanning ? "disabled" : ""}>${scanning ? "正在检测..." : "立即检测"}</button></section>${body}${selectionAction}</main>`;
 }
@@ -191,7 +191,11 @@ export function mountChanges(
   };
   const openReview = (activeChangeId?: string) => {
     if (state.status !== "ready" || !selected.size) return;
-    const selectedChanges = state.changes.filter((change) => selected.has(change.id) && change.kind !== "blocked");
+    const changesById = new Map(selectableChanges(state.changes).map((change) => [change.id, change]));
+    const selectedChanges = [...selected].flatMap((id) => {
+      const change = changesById.get(id);
+      return change ? [change] : [];
+    });
     const activeId = activeChangeId && selected.has(activeChangeId) ? activeChangeId : selectedChanges[0]?.id;
     if (!activeId) return;
     navigation.openReview({

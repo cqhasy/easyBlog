@@ -245,6 +245,8 @@ time { color: #91a19b; font-size: 12px; white-space: nowrap; }
 .changes-message button { background: transparent; border-color: #d36543; color: #a34d2f; min-height: 32px; }
 .selection-region { align-items: center; border-bottom: 1px solid #d8e4de; border-top: 1px solid #d8e4de; display: flex; justify-content: space-between; margin-top: 16px; min-height: 70px; padding: 14px 0; }
 .selection-region > span { color: #24634f; font-size: 12px; font-weight: 700; }
+.review-primary-button { background: var(--accent); border-color: var(--accent); }
+.review-primary-button:hover { background: var(--accent-strong); border-color: var(--accent-strong); }
 
 .review-page { margin: 0 auto; max-width: 1240px; min-height: 100vh; padding: 40px 38px 72px; }
 .review-header { align-items: center; border-bottom: 1px solid var(--border); display: flex; gap: 18px; padding-bottom: 18px; }

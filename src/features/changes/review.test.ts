@@ -46,6 +46,27 @@ describe("focused change review", () => {
     expect(html).not.toContain("未选择的变更");
   });
 
+  it("localizes change kinds in the review sequence and summary", () => {
+    const html = renderChangeReview(reviewState([
+      change("added", "a"),
+      change("updated", "b"),
+      change("moved", "c"),
+      change("deleted", "d"),
+      change("blocked", "e"),
+    ], "a"));
+
+    expect(html).toContain(">新增<");
+    expect(html).toContain(">更新<");
+    expect(html).toContain(">移动<");
+    expect(html).toContain(">删除<");
+    expect(html).toContain(">需要处理<");
+    expect(html).not.toContain(">added<");
+    expect(html).not.toContain(">updated<");
+    expect(html).not.toContain(">moved<");
+    expect(html).not.toContain(">deleted<");
+    expect(html).not.toContain(">blocked<");
+  });
+
   it("renders a final dialog that publishes the persisted batch only", () => {
     const html = renderPublishDialog(plan("batch-1"), target);
 
