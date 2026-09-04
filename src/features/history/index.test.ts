@@ -126,9 +126,10 @@ describe("history", () => {
   it("refreshes a rejected rollback into a retryable pending action", async () => {
     const root = new HistoryDomRoot();
     const pendingRollback = { ...publishedRecord(), state: "rollback_pending" as const, rollback_commit_sha: "reverse-commit" };
+    let resolveRefresh!: (records: PublicationRecord[]) => void;
     const listPublications = vi.fn()
       .mockResolvedValueOnce([publishedRecord()])
-      .mockResolvedValueOnce([pendingRollback]);
+      .mockImplementationOnce(() => new Promise<PublicationRecord[]>((resolve) => { resolveRefresh = resolve; }));
 
     mountHistory(root as unknown as HTMLElement, {
       listPublications,
@@ -142,6 +143,13 @@ describe("history", () => {
     await flushDomUpdates();
 
     expect(listPublications).toHaveBeenCalledTimes(2);
+    expect(root.innerHTML).toContain("正在创建回滚提交...");
+    expect(root.innerHTML).not.toContain("提交 published-commit 的回滚未完成，回滚提交会保留以便重试。");
+    expect(root.innerHTML).not.toContain('data-action="retry"');
+
+    resolveRefresh([pendingRollback]);
+    await flushDomUpdates();
+
     expect(root.innerHTML).toContain("提交 published-commit 的回滚未完成，回滚提交会保留以便重试。");
     expect(root.innerHTML).toContain('data-action="retry"');
     expect(root.innerHTML).toContain("重试回滚推送");
