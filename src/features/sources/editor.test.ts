@@ -91,4 +91,11 @@ describe("source and target editors", () => {
     expect(renderSourceEditor(editorState)).toContain('type="submit" class="task-primary-button"');
     expect(renderTargetEditor(initialTargetEditorState)).toContain('class="task-primary-button"');
   });
+
+  it("reports each editor save in its local action area", () => {
+    expect(renderSourceEditor({ ...editorState, saving: true }))
+      .toContain('class="editor-operation" role="status" aria-live="polite">正在保存同步范围...</p>');
+    expect(renderTargetEditor({ ...initialTargetEditorState, saving: true }))
+      .toContain('class="editor-operation" role="status" aria-live="polite">正在保存发布目标...</p>');
+  });
 });

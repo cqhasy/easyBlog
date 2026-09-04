@@ -63,7 +63,7 @@ describe("sources feature", () => {
 
   it("uses the fallback when an Error has no message", async () => {
     const state = await loadSources({ listSources: vi.fn().mockRejectedValue(new Error()) });
-    expect(state).toEqual({ status: "error", message: "Sources could not be loaded" });
+    expect(state).toEqual({ status: "error", message: "来源无法加载" });
   });
 
   it("preserves structured Tauri error messages", async () => {
@@ -198,6 +198,7 @@ describe("sources feature", () => {
 
     expect(html).toContain('<p class="eyebrow">内容资源</p>');
     expect(html).not.toContain("EASYBLOG / SOURCES");
+    expect(html).toContain('<main class="resource-overview-region" aria-label="资源详情">');
     expect(html).toContain('class="task-primary-button" data-action="add-source"');
     expect(html).toContain('class="task-primary-button" data-action="connect-target"');
     expect(renderResourceOverview({

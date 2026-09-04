@@ -70,6 +70,15 @@ describe("history", () => {
     expect(html).not.toContain('data-action="rollback"');
     expect(renderRollbackDialog(record)).toContain('data-action="confirm-rollback"');
     expect(renderRollbackDialog(record)).toContain(record.commit_sha);
+    expect(renderRollbackDialog(record)).toContain('role="dialog" aria-modal="true"');
+    expect(renderRollbackDialog(record)).toContain(`aria-describedby="rollback-description-${record.batch_id}"`);
+  });
+
+  it("labels the publication history region with its page heading", () => {
+    const html = renderHistory([publishedRecord()]);
+
+    expect(html).toContain('<main class="history-page" aria-labelledby="history-title">');
+    expect(html).toContain('<h1 id="history-title">发布历史</h1>');
   });
 
   it("explains unavailable rollback without rendering an enabled action", () => {

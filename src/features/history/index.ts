@@ -33,7 +33,8 @@ function renderHistoryAction(record: PublicationRecord): string {
 
 export function renderRollbackDialog(record: PublicationRecord): string {
   if (historyActionFor(record)?.action !== "rollback") return "";
-  return `<dialog data-rollback-dialog data-batch-id="${escapeHtml(record.batch_id)}" aria-labelledby="rollback-title-${escapeHtml(record.batch_id)}"><form method="dialog" class="history-dialog"><header><p class="eyebrow">EASYBLOG / ROLLBACK</p><h2 id="rollback-title-${escapeHtml(record.batch_id)}">确认回滚发布</h2></header><p>将为提交 <code>${escapeHtml(record.commit_sha)}</code> 创建并推送新的反向提交，不会改写远程历史。</p><dl><div><dt>发布目标</dt><dd>${escapeHtml(record.target_id)}</dd></div><div><dt>发布批次</dt><dd>${escapeHtml(record.batch_id)}</dd></div><div><dt>原始提交</dt><dd>${escapeHtml(record.commit_sha)}</dd></div></dl><footer><button type="button" class="secondary-button" data-action="cancel-rollback">取消</button><button type="button" class="history-primary-button" data-action="confirm-rollback" data-batch-id="${escapeHtml(record.batch_id)}">确认回滚</button></footer></form></dialog>`;
+  const batchId = escapeHtml(record.batch_id);
+  return `<dialog data-rollback-dialog data-batch-id="${batchId}" role="dialog" aria-modal="true" aria-labelledby="rollback-title-${batchId}" aria-describedby="rollback-description-${batchId}"><form method="dialog" class="history-dialog"><header><p class="eyebrow">发布回滚</p><h2 id="rollback-title-${batchId}">确认回滚发布</h2></header><p id="rollback-description-${batchId}">将为提交 <code>${escapeHtml(record.commit_sha)}</code> 创建并推送新的反向提交，不会改写远程历史。</p><dl><div><dt>发布目标</dt><dd>${escapeHtml(record.target_id)}</dd></div><div><dt>发布批次</dt><dd>${batchId}</dd></div><div><dt>原始提交</dt><dd>${escapeHtml(record.commit_sha)}</dd></div></dl><footer><button type="button" class="secondary-button" data-action="cancel-rollback">取消</button><button type="button" class="history-primary-button" data-action="confirm-rollback" data-batch-id="${batchId}">确认回滚</button></footer></form></dialog>`;
 }
 
 export function renderHistory(records: PublicationRecord[], message = ""): string {
@@ -42,12 +43,46 @@ export function renderHistory(records: PublicationRecord[], message = ""): strin
     return `<li class="history-row"><div class="history-commit"><strong>${escapeHtml(record.commit_sha)}</strong><span>批次 ${escapeHtml(record.batch_id)}</span></div><div class="history-context"><strong>${escapeHtml(record.target_id)}</strong><span>${escapeHtml(record.scope_id)} · ${record.change_ids.length} 项变更</span>${reason ? `<span class="history-unavailable">${escapeHtml(reason)}</span>` : ""}</div><div class="history-state"><span class="publication-state state-${record.state}">${label(record.state)}</span></div><time>${escapeHtml(record.published_at ?? "提交已创建，尚未推送")}</time>${renderHistoryAction(record)}</li>`;
   }).join("") : `<li class="history-empty">尚无发布记录</li>`;
   const dialogs = records.map(renderRollbackDialog).join("");
-  return `<main class="history-page"><header class="changes-header"><div><p class="eyebrow">EASYBLOG / HISTORY</p><h1>发布历史</h1><p>已发布提交可生成新的反向提交，不会改写远程历史。</p></div><button type="button" class="task-primary-button" data-action="refresh-history">刷新</button></header>${message ? `<p class="history-message" role="status">${escapeHtml(message)}</p>` : ""}<div class="history-column-headings" aria-hidden="true"><span>提交</span><span>目标 / 范围</span><span>状态</span><span>时间</span><span></span></div><ul class="history-list">${rows}</ul>${dialogs}</main>`;
+  return `<main class="history-page" aria-labelledby="history-title"><header class="changes-header"><div><p class="eyebrow">发布记录</p><h1 id="history-title">发布历史</h1><p>已发布提交可生成新的反向提交，不会改写远程历史。</p></div><button type="button" class="task-primary-button" data-action="refresh-history">刷新</button></header>${message ? `<p class="history-message" role="status" aria-live="polite">${escapeHtml(message)}</p>` : ""}<div class="history-column-headings" aria-hidden="true"><span>提交</span><span>目标 / 范围</span><span>状态</span><span>时间</span><span></span></div><ul class="history-list">${rows}</ul>${dialogs}</main>`;
 }
 
 export function mountHistory(root: HTMLElement, api: HistoryApi = { listPublications, retryRelease, rollbackPublication }): void {
   let records: PublicationRecord[] = []; let message = ""; let operationPending = false;
+  let rollbackDialogSession: { dialog: HTMLDialogElement; opener: HTMLElement; nativeModal: boolean } | undefined;
   const render = () => { root.innerHTML = renderHistory(records, message); };
+  const restoreDialogFocus = (session: { dialog: HTMLDialogElement; opener: HTMLElement }) => {
+    if (rollbackDialogSession === session) rollbackDialogSession = undefined;
+    session.opener.focus();
+  };
+  const openRollbackDialog = (dialog: HTMLDialogElement, opener: HTMLElement) => {
+    const session = { dialog, opener, nativeModal: false };
+    rollbackDialogSession = session;
+    if (typeof dialog.showModal === "function") {
+      dialog.addEventListener("close", () => restoreDialogFocus(session), { once: true });
+      try {
+        dialog.showModal();
+        session.nativeModal = true;
+        return;
+      } catch {
+        // Older webviews can use the attribute fallback without a modal API.
+      }
+    }
+    dialog.setAttribute("open", "");
+  };
+  const closeRollbackDialog = (dialog?: HTMLDialogElement) => {
+    const session = rollbackDialogSession;
+    if (!session) {
+      if (typeof dialog?.close === "function") dialog.close();
+      else dialog?.removeAttribute("open");
+      return;
+    }
+    if (session.nativeModal && typeof session.dialog.close === "function") {
+      session.dialog.close();
+      return;
+    }
+    session.dialog.removeAttribute("open");
+    restoreDialogFocus(session);
+  };
   const refresh = (releaseOperation = false, nextMessage = "") => {
     void api.listPublications().then((value) => {
       records = value;
@@ -83,18 +118,19 @@ export function mountHistory(root: HTMLElement, api: HistoryApi = { listPublicat
     const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-action]"); if (!button) return;
     const action = button.dataset.action; if (action === "refresh-history") { refresh(); return; }
     if (action === "cancel-rollback") {
-      button.closest<HTMLDialogElement>("dialog")?.close();
+      closeRollbackDialog(button.closest<HTMLDialogElement>("dialog") ?? undefined);
       return;
     }
     const record = records.find((item) => item.batch_id === button.dataset.batchId); if (!record) return;
     const historyAction = historyActionFor(record);
     if (action === "retry" && historyAction?.action === "retry") { startOperation(record, "retry"); return; }
     if (action === "open-rollback-dialog" && historyAction?.action === "rollback") {
-      Array.from(root.querySelectorAll<HTMLDialogElement>("[data-rollback-dialog]")).find((dialog) => dialog.dataset.batchId === record.batch_id)?.showModal();
+      const dialog = Array.from(root.querySelectorAll<HTMLDialogElement>("[data-rollback-dialog]")).find((item) => item.dataset.batchId === record.batch_id);
+      if (dialog) openRollbackDialog(dialog, button);
       return;
     }
     if (action === "confirm-rollback" && historyAction?.action === "rollback") {
-      button.closest<HTMLDialogElement>("dialog")?.close();
+      closeRollbackDialog();
       startOperation(record, "rollback");
     }
   });

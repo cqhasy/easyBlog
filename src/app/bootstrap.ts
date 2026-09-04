@@ -49,7 +49,7 @@ export function renderAppShell(
     return `<button type="button" data-page="${page}" ${active ? 'class="is-active" aria-current="page"' : ""}>${pageLabels[page]}</button>`;
   }).join("");
   const pageLabel = pageLabels[currentPage as keyof typeof pageLabels] ?? "easyBlog";
-  return `<div class="app-shell"><aside class="app-nav" aria-label="主导航"><div class="app-brand" aria-label="easyBlog">easy<span>Blog</span></div><nav aria-label="页面导航">${nav}</nav></aside><section class="app-frame"><header class="app-topbar" data-github-authorization><span class="app-page-label">${pageLabel}</span>${githubAuthorizationMarkup(authorization, authorizationLoading)}</header><main class="app-content" data-app-content></main></section></div>`;
+  return `<div class="app-shell"><aside class="app-nav" aria-label="主导航"><div class="app-brand" aria-label="easyBlog">easy<span>Blog</span></div><nav aria-label="页面导航">${nav}</nav></aside><section class="app-frame"><header class="app-topbar" aria-label="当前页面与 GitHub 状态" data-github-authorization><span class="app-page-label">${pageLabel}</span>${githubAuthorizationMarkup(authorization, authorizationLoading)}</header><main class="app-content" data-app-content></main></section></div>`;
 }
 
 export function bootstrap(root: HTMLElement | null): void {

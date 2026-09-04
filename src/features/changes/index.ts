@@ -105,7 +105,7 @@ function renderGroups(changes: Change[], selected: Set<string>): string {
 }
 
 export function renderChanges(state: ChangesState, selected = new Set<string>(), scanning = false, scopes: ScopeSummary[] = []): string {
-  const header = `<header class="changes-header"><div><p class="eyebrow">EASYBLOG / REVIEW</p><h1 id="changes-title">待发布变更</h1><p>先检测，再选择本次需要评审的内容。</p></div></header>`;
+  const header = `<header class="changes-header"><div><p class="eyebrow">发布评审</p><h1 id="changes-title">待发布变更</h1><p>先检测，再选择本次需要评审的内容。</p></div></header>`;
   if (state.status === "loading") return `<main class="changes-page" aria-labelledby="changes-title">${header}<p class="changes-loading" role="status">正在整理待发布内容...</p></main>`;
   if (state.status === "error") return `<main class="changes-page" aria-labelledby="changes-title">${header}<section class="changes-message" role="alert"><strong>暂时无法打开变更清单</strong><p>${escapeHtml(state.message)}</p><button type="button" data-action="retry">重试</button></section></main>`;
   if (state.status === "needs_scope") return `<main class="changes-page" aria-labelledby="changes-title">${header}<section class="changes-empty"><span class="empty-mark" aria-hidden="true">+</span><h2>先添加一个同步范围</h2><p>范围确定了 easyBlog 要检查哪些内容。</p></section></main>`;
@@ -119,7 +119,10 @@ export function renderChanges(state: ChangesState, selected = new Set<string>(),
   const selectionAction = selectedChanges.length
     ? `<footer class="selection-region" aria-label="已选变更操作"><span>已选择 ${selectedChanges.length} 项</span><button type="button" class="review-primary-button" data-action="open-review">进入评审</button></footer>`
     : "";
-  return `<main class="changes-page" aria-labelledby="changes-title">${header}<section class="changes-toolbar" aria-label="检测控制"><div><label for="changes-scope">检测范围</label><select id="changes-scope" data-action="change-scope" ${scanning ? "disabled" : ""}>${scopeOptions}</select><span>${changeCount ? `发现 ${changeCount} 项待确认变更` : "检查此范围的新变化"}</span></div><button type="button" data-action="scan" ${scanning ? "disabled" : ""}>${scanning ? "正在检测..." : "立即检测"}</button></section>${body}${selectionAction}</main>`;
+  const operation = scanning
+    ? '<p class="changes-operation" role="status" aria-live="polite">正在检测变更...</p>'
+    : "";
+  return `<main class="changes-page" aria-labelledby="changes-title">${header}<section class="changes-toolbar" aria-label="检测控制"><div><label for="changes-scope">检测范围</label><select id="changes-scope" data-action="change-scope" ${scanning ? "disabled" : ""}>${scopeOptions}</select><span>${changeCount ? `发现 ${changeCount} 项待确认变更` : "检查此范围的新变化"}</span></div><div class="changes-toolbar-actions">${operation}<button type="button" data-action="scan" ${scanning ? "disabled" : ""}>${scanning ? "正在检测..." : "立即检测"}</button></div></section>${body}${selectionAction}</main>`;
 }
 
 export type ChangesController = { refresh: () => void };

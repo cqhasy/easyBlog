@@ -137,8 +137,11 @@ export function renderWorkbench(state: WorkbenchState, scanning = false): string
   const openChanges = pending
     ? `<button type="button" class="workbench-secondary" data-action="open-changes">查看变更</button>`
     : "";
+  const operation = scanning
+    ? '<p class="workbench-operation" role="status" aria-live="polite">正在检查变更...</p>'
+    : "";
 
-  return `<section class="workbench-page" aria-labelledby="workbench-title">${header}<section class="workbench-status"><div><p class="workbench-kicker">${pending ? "下一步" : "状态正常"}</p><h2>${pending ? `处理 ${pending} 项待确认变更` : "检查最近的内容变化"}</h2>${scanFacts}</div><div class="workbench-actions"><button type="button" data-action="scan" ${scanning ? "disabled" : ""}>${primaryLabel}</button>${openChanges}</div></section><dl class="workbench-facts"><div><dt>检测范围</dt><dd>${escapeHtml(state.scopeName)}</dd></div><div><dt>上次检测</dt><dd>${escapeHtml(formatTime(state.scannedAt))}</dd></div><div><dt>发布状态</dt><dd>${publicationState}</dd></div></dl><section class="workbench-activity" aria-label="最近发布"><p class="workbench-kicker">最近发布</p><p>${escapeHtml(publicationSummary(state.latestPublication))}</p></section></section>`;
+  return `<section class="workbench-page" aria-labelledby="workbench-title">${header}<section class="workbench-status"><div><p class="workbench-kicker">${pending ? "下一步" : "状态正常"}</p><h2>${pending ? `处理 ${pending} 项待确认变更` : "检查最近的内容变化"}</h2>${scanFacts}</div><div class="workbench-actions">${operation}<button type="button" data-action="scan" ${scanning ? "disabled" : ""}>${primaryLabel}</button>${openChanges}</div></section><dl class="workbench-facts"><div><dt>检测范围</dt><dd>${escapeHtml(state.scopeName)}</dd></div><div><dt>上次检测</dt><dd>${escapeHtml(formatTime(state.scannedAt))}</dd></div><div><dt>发布状态</dt><dd>${publicationState}</dd></div></dl><section class="workbench-activity" aria-label="最近发布"><p class="workbench-kicker">最近发布</p><p>${escapeHtml(publicationSummary(state.latestPublication))}</p></section></section>`;
 }
 
 export function mountWorkbench(

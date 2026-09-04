@@ -87,6 +87,18 @@ describe("workbench", () => {
     expect(html).toContain('data-action="open-changes"');
   });
 
+  it("reports an in-progress scan beside its workbench action", () => {
+    const html = renderWorkbench({
+      status: "ready",
+      scopeName: "文章",
+      pendingCount: 3,
+      publicationState: "ready",
+      latestPublication: null,
+    }, true);
+
+    expect(html).toContain('class="workbench-operation" role="status" aria-live="polite">正在检查变更...</p>');
+  });
+
   it("renders a configuration recovery action instead of a change list", () => {
     expect(renderWorkbench({ status: "needs_scope" })).toContain('data-action="open-sources"');
   });

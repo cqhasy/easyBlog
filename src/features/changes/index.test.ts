@@ -72,6 +72,16 @@ describe("changes workspace", () => {
     expect(html).not.toContain('data-action="preview"');
   });
 
+  it("reports an in-progress scan in the changes control region", () => {
+    const html = renderChanges(
+      { status: "ready", scope, changes: [change("added")], scannedAt: "2026-09-02T00:00:00Z" },
+      new Set(["added"]),
+      true,
+    );
+
+    expect(html).toContain('class="changes-operation" role="status" aria-live="polite">正在检测变更...</p>');
+  });
+
   it("opens review in the explicit selected order rather than backend list order", async () => {
     const root = new ChangesDomRoot();
     let reviewContext: { scopeId: string; selectedChangeIds: string[]; activeChangeId: string } | undefined;

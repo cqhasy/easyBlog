@@ -84,30 +84,32 @@ function renderSequence(state: SelectedReviewState): string {
 function renderTabs(activeView: "summary" | "markdown" | "diff"): string {
   return `<div class="review-tabs" role="tablist" aria-label="评审视图">${(["summary", "markdown", "diff"] as const).map((view) => {
     const label = view === "summary" ? "概览" : view === "markdown" ? "Markdown" : "差异";
-    return `<button type="button" role="tab" data-action="change-review-view" data-review-view="${view}" ${view === activeView ? 'aria-selected="true"' : 'aria-selected="false"'}>${label}</button>`;
+    const active = view === activeView;
+    return `<button type="button" id="review-tab-${view}" role="tab" aria-controls="review-panel-${view}" data-action="change-review-view" data-review-view="${view}" aria-selected="${active}" tabindex="${active ? "0" : "-1"}">${label}</button>`;
   }).join("")}</div>`;
 }
 
 function renderActiveContent(change: Change | undefined, view: "summary" | "markdown" | "diff", plan?: ReleasePlan): string {
-  if (!change) return `<section class="review-content"><p>请选择一项变更。</p></section>`;
+  const panel = (content: string) => `<section class="review-content" id="review-panel-${view}" role="tabpanel" aria-labelledby="review-tab-${view}" tabindex="0">${content}</section>`;
+  if (!change) return panel("<p>请选择一项变更。</p>");
   if (view === "markdown") {
     const metadata = [
-      `source_path: ${change.source_path}`,
-      `source_identity: ${change.source_identity}`,
-      change.snapshot ? `observed_at: ${change.snapshot.observed_at}` : "snapshot: 尚无可用快照",
+      `来源路径：${change.source_path}`,
+      `来源标识：${change.source_identity}`,
+      change.snapshot ? `检测时间：${change.snapshot.observed_at}` : "快照：尚无可用快照",
     ].join("\n");
-    return `<section class="review-content"><h2>${escapeHtml(titleFor(change))}</h2><pre class="review-markdown">${escapeHtml(metadata)}</pre></section>`;
+    return panel(`<h2>${escapeHtml(titleFor(change))}</h2><pre class="review-markdown">${escapeHtml(metadata)}</pre>`);
   }
   if (view === "diff") {
     const matchingDiffs = plan?.diffs.filter((diff) => diff.path === change.source_path) ?? [];
     const displayedDiffs = matchingDiffs.length ? matchingDiffs : plan?.diffs ?? [];
-    return `<section class="review-content"><h2>${escapeHtml(titleFor(change))}</h2>${displayedDiffs.length ? `<div class="review-diffs">${displayedDiffs.map((diff) => `<article><header><strong>${escapeHtml(diff.path)}</strong><span>${escapeHtml(fileChangeKindLabels[diff.kind])}</span></header><pre>${escapeHtml(diff.patch)}</pre></article>`).join("")}</div>` : `<p class="review-muted">生成预览后，这里会显示持久化的文件差异。</p>`}</section>`;
+    return panel(`<h2>${escapeHtml(titleFor(change))}</h2>${displayedDiffs.length ? `<div class="review-diffs">${displayedDiffs.map((diff) => `<article><header><strong>${escapeHtml(diff.path)}</strong><span>${escapeHtml(fileChangeKindLabels[diff.kind])}</span></header><pre>${escapeHtml(diff.patch)}</pre></article>`).join("")}</div>` : `<p class="review-muted">生成预览后，这里会显示持久化的文件差异。</p>`}`);
   }
-  return `<section class="review-content"><p class="eyebrow">${escapeHtml(changeKindLabels[change.kind])}</p><h2>${escapeHtml(titleFor(change))}</h2><dl class="review-facts"><div><dt>来源路径</dt><dd>${escapeHtml(change.source_path)}</dd></div><div><dt>变更类型</dt><dd>${escapeHtml(changeKindLabels[change.kind])}</dd></div>${change.previous_path ? `<div><dt>原路径</dt><dd>${escapeHtml(change.previous_path)}</dd></div>` : ""}</dl><p class="review-note">${escapeHtml(changeNote(change))}</p></section>`;
+  return panel(`<p class="eyebrow">${escapeHtml(changeKindLabels[change.kind])}</p><h2>${escapeHtml(titleFor(change))}</h2><dl class="review-facts"><div><dt>来源路径</dt><dd>${escapeHtml(change.source_path)}</dd></div><div><dt>变更类型</dt><dd>${escapeHtml(changeKindLabels[change.kind])}</dd></div>${change.previous_path ? `<div><dt>原路径</dt><dd>${escapeHtml(change.previous_path)}</dd></div>` : ""}</dl><p class="review-note">${escapeHtml(changeNote(change))}</p>`);
 }
 
 export function renderPublishDialog(plan: ReleasePlan, target: ConnectedTarget): string {
-  return `<dialog data-publish-dialog aria-labelledby="publish-title"><form method="dialog" class="publish-dialog"><header><p class="eyebrow">EASYBLOG / PUBLISH</p><h2 id="publish-title">确认发布</h2></header><dl><div><dt>仓库</dt><dd>${escapeHtml(target.repository)}</dd></div><div><dt>分支</dt><dd>${escapeHtml(target.default_branch)}</dd></div><div><dt>已选变更</dt><dd>${plan.batch.change_ids.length} 项</dd></div><div><dt>受影响文件</dt><dd>${plan.diffs.length} 个</dd></div></dl><footer><button type="button" class="secondary-button" data-action="cancel-publish">取消</button><button type="button" class="review-primary-button" data-action="confirm-publish" data-batch-id="${escapeHtml(plan.batch.id)}">确认发布</button></footer></form></dialog>`;
+  return `<dialog data-publish-dialog role="dialog" aria-modal="true" aria-labelledby="publish-title" aria-describedby="publish-description"><form method="dialog" class="publish-dialog"><header><p class="eyebrow">发布确认</p><h2 id="publish-title">确认发布</h2></header><p id="publish-description">确认后将把本次预览中的变更推送到发布目标。</p><dl><div><dt>仓库</dt><dd>${escapeHtml(target.repository)}</dd></div><div><dt>分支</dt><dd>${escapeHtml(target.default_branch)}</dd></div><div><dt>已选变更</dt><dd>${plan.batch.change_ids.length} 项</dd></div><div><dt>受影响文件</dt><dd>${plan.diffs.length} 个</dd></div></dl><footer><button type="button" class="secondary-button" data-action="cancel-publish">取消</button><button type="button" class="review-primary-button" data-action="confirm-publish" data-batch-id="${escapeHtml(plan.batch.id)}">确认发布</button></footer></form></dialog>`;
 }
 
 export function renderChangeReview(state: ReviewState): string {
@@ -117,7 +119,7 @@ export function renderChangeReview(state: ReviewState): string {
     const label = state.recovery === "retry-preview" ? "重试预览" : state.recovery === "open-sources" ? "前往来源" : "返回变更";
     return `<main class="review-page"><section class="review-recovery" role="alert"><h1>无法继续评审</h1><p>${escapeHtml(state.message)}</p><button type="button" class="review-primary-button" data-action="${action}">${label}</button></section></main>`;
   }
-  if (state.status === "published") return `<main class="review-page"><section class="review-published" role="status"><p class="eyebrow">EASYBLOG / PUBLISHED</p><h1>发布已推送</h1><p>提交 <code>${escapeHtml(state.publication.commit_sha)}</code> 已发布。</p><button type="button" data-action="back-to-changes">返回变更</button></section></main>`;
+  if (state.status === "published") return `<main class="review-page"><section class="review-published" role="status"><p class="eyebrow">发布完成</p><h1>发布已推送</h1><p>提交 <code>${escapeHtml(state.publication.commit_sha)}</code> 已发布。</p><button type="button" data-action="back-to-changes">返回变更</button></section></main>`;
   if (state.status === "publishing") return `<main class="review-page"><section class="review-recovery" role="status"><h1>正在发布</h1><p>正在向 ${escapeHtml(state.target.repository)} 推送已确认的预览。</p></section></main>`;
 
   const activeChange = activeFrom(state);
@@ -125,8 +127,8 @@ export function renderChangeReview(state: ReviewState): string {
   const plan = state.status === "preview" ? state.plan : undefined;
   const summary = state.status === "preview"
     ? `<footer class="review-actions"><span>${state.plan.diffs.length} 个目标文件</span><button type="button" class="review-primary-button" data-action="open-publish-dialog">确认发布</button></footer>${renderPublishDialog(state.plan, state.target)}`
-    : `<footer class="review-actions"><span>${state.selectedChanges.length} 项变更待确认</span><button type="button" class="review-primary-button" data-action="preview-release" ${state.status === "previewing" ? "disabled" : ""}>${state.status === "previewing" ? "正在生成预览..." : "预览发布"}</button></footer>`;
-  return `<main class="review-page"><header class="review-header"><button type="button" class="secondary-button" data-action="back-to-changes">返回变更</button><div><p class="eyebrow">EASYBLOG / RELEASE REVIEW</p><h1>${escapeHtml(state.scope.scope.name)}</h1></div></header><div class="review-layout">${renderSequence(state)}<section class="review-pane">${renderTabs(activeView)}${renderActiveContent(activeChange, activeView, plan)}${summary}</section></div></main>`;
+    : `<footer class="review-actions"><span>${state.selectedChanges.length} 项变更待确认</span>${state.status === "previewing" ? '<p class="review-operation" role="status" aria-live="polite">正在生成发布预览...</p>' : ""}<button type="button" class="review-primary-button" data-action="preview-release" ${state.status === "previewing" ? "disabled" : ""}>${state.status === "previewing" ? "正在生成预览..." : "预览发布"}</button></footer>`;
+  return `<main class="review-page"><header class="review-header"><button type="button" class="secondary-button" data-action="back-to-changes">返回变更</button><div><p class="eyebrow">发布评审</p><h1>${escapeHtml(state.scope.scope.name)}</h1></div></header><div class="review-layout">${renderSequence(state)}<section class="review-pane">${renderTabs(activeView)}${renderActiveContent(activeChange, activeView, plan)}${summary}</section></div></main>`;
 }
 
 export function mountChangeReview(
@@ -140,7 +142,41 @@ export function mountChangeReview(
   let reviewChanges: Change[] = [];
   let activeView: "summary" | "markdown" | "diff" = "summary";
   let generation = 0;
+  let publishDialogSession: { dialog: HTMLDialogElement; opener: HTMLElement; nativeModal: boolean } | undefined;
   const render = () => { root.innerHTML = renderChangeReview(state); };
+  const restoreDialogFocus = (session: { dialog: HTMLDialogElement; opener: HTMLElement }) => {
+    if (publishDialogSession === session) publishDialogSession = undefined;
+    session.opener.focus();
+  };
+  const openPublishDialog = (dialog: HTMLDialogElement, opener: HTMLElement) => {
+    const session = { dialog, opener, nativeModal: false };
+    publishDialogSession = session;
+    if (typeof dialog.showModal === "function") {
+      dialog.addEventListener("close", () => restoreDialogFocus(session), { once: true });
+      try {
+        dialog.showModal();
+        session.nativeModal = true;
+        return;
+      } catch {
+        // A partially implemented dialog API can still use the attribute fallback.
+      }
+    }
+    dialog.setAttribute("open", "");
+  };
+  const closePublishDialog = (dialog?: HTMLDialogElement) => {
+    const session = publishDialogSession;
+    if (!session) {
+      if (typeof dialog?.close === "function") dialog.close();
+      else dialog?.removeAttribute("open");
+      return;
+    }
+    if (session.nativeModal && typeof session.dialog.close === "function") {
+      session.dialog.close();
+      return;
+    }
+    session.dialog.removeAttribute("open");
+    restoreDialogFocus(session);
+  };
   const backContext = () => ({
     scopeId: context.scopeId,
     selectedChangeIds: reviewChanges.length ? reviewChanges.map((change) => change.id) : context.selectedChangeIds,
@@ -226,17 +262,19 @@ export function mountChangeReview(
       return;
     }
     if (action === "open-publish-dialog" && state.status === "preview") {
-      root.querySelector<HTMLDialogElement>("[data-publish-dialog]")?.showModal();
+      const dialog = root.querySelector<HTMLDialogElement>("[data-publish-dialog]");
+      if (dialog && actionElement) openPublishDialog(dialog, actionElement);
       return;
     }
     if (action === "cancel-publish") {
-      actionElement?.closest<HTMLDialogElement>("dialog")?.close();
+      closePublishDialog(actionElement?.closest<HTMLDialogElement>("dialog") ?? undefined);
       return;
     }
     if (action === "confirm-publish" && state.status === "preview" && api.publishRelease) {
       const batchId = actionElement?.dataset.batchId;
       if (batchId !== state.plan.batch.id) return;
       const { plan, target } = state;
+      closePublishDialog();
       const currentGeneration = ++generation;
       state = { status: "publishing", plan, target };
       render();

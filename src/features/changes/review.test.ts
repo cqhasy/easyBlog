@@ -46,6 +46,21 @@ describe("focused change review", () => {
     expect(html).not.toContain("未选择的变更");
   });
 
+  it("connects review tabs to their labeled panel and reports preview progress locally", () => {
+    const html = renderChangeReview(reviewState([change("added", "a")], "a"));
+    const previewing = renderChangeReview({
+      status: "previewing",
+      scope,
+      selectedChanges: [change("added", "a")],
+      activeChangeId: "a",
+    });
+
+    expect(html).toContain('role="tablist"');
+    expect(html).toContain('id="review-tab-summary" role="tab" aria-controls="review-panel-summary"');
+    expect(html).toContain('id="review-panel-summary" role="tabpanel" aria-labelledby="review-tab-summary" tabindex="0"');
+    expect(previewing).toContain('class="review-operation" role="status" aria-live="polite">正在生成发布预览...</p>');
+  });
+
   it("localizes change kinds in the review sequence and summary", () => {
     const html = renderChangeReview(reviewState([
       change("added", "a"),
@@ -71,6 +86,8 @@ describe("focused change review", () => {
     const html = renderPublishDialog(plan("batch-1"), target);
 
     expect(html).toContain('data-action="confirm-publish" data-batch-id="batch-1"');
+    expect(html).toContain('role="dialog" aria-modal="true"');
+    expect(html).toContain('aria-describedby="publish-description"');
     expect(html).not.toContain("data-change-id");
   });
 
