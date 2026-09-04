@@ -86,4 +86,14 @@ describe("focused change review", () => {
 
     expect(html).toContain("@@ -1 +1 @@");
   });
+
+  it("uses the review interaction treatment for recovery actions", () => {
+    const html = renderChangeReview({
+      status: "error",
+      message: "预览失败",
+      recovery: "retry-preview",
+    });
+
+    expect(html).toContain('class="review-primary-button" data-action="retry-preview"');
+  });
 });

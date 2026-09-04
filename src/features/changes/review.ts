@@ -115,7 +115,7 @@ export function renderChangeReview(state: ReviewState): string {
   if (state.status === "error") {
     const action = state.recovery === "retry-preview" ? "retry-preview" : state.recovery === "open-sources" ? "open-sources" : "back-to-changes";
     const label = state.recovery === "retry-preview" ? "重试预览" : state.recovery === "open-sources" ? "前往来源" : "返回变更";
-    return `<main class="review-page"><section class="review-recovery" role="alert"><h1>无法继续评审</h1><p>${escapeHtml(state.message)}</p><button type="button" data-action="${action}">${label}</button></section></main>`;
+    return `<main class="review-page"><section class="review-recovery" role="alert"><h1>无法继续评审</h1><p>${escapeHtml(state.message)}</p><button type="button" class="review-primary-button" data-action="${action}">${label}</button></section></main>`;
   }
   if (state.status === "published") return `<main class="review-page"><section class="review-published" role="status"><p class="eyebrow">EASYBLOG / PUBLISHED</p><h1>发布已推送</h1><p>提交 <code>${escapeHtml(state.publication.commit_sha)}</code> 已发布。</p><button type="button" data-action="back-to-changes">返回变更</button></section></main>`;
   if (state.status === "publishing") return `<main class="review-page"><section class="review-recovery" role="status"><h1>正在发布</h1><p>正在向 ${escapeHtml(state.target.repository)} 推送已确认的预览。</p></section></main>`;
