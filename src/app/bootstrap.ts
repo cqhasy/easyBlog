@@ -61,6 +61,7 @@ export function createAppController(
   let startupState: StartupState = { kind: "checking" };
   let viewportWidth = initialViewportWidth;
   let authorizationGeneration = 0;
+  let activeLoginGeneration: number | undefined;
   let sourcesResourceId: string | undefined;
 
   const renderCurrentPage = () => {
@@ -158,21 +159,26 @@ export function createAppController(
     },
     authorize: async () => {
       const generation = ++authorizationGeneration;
+      activeLoginGeneration = generation;
       transition({ type: "begin-login" });
       try {
         await dependencies.startGithubLogin();
+        if (generation !== authorizationGeneration) return;
+        await checkAuthorization(generation);
       } catch {
         if (generation !== authorizationGeneration) return;
         transition({
           type: "login-failed",
           message: "GitHub authorization was not completed. Please try again.",
         });
-        return;
+      } finally {
+        if (activeLoginGeneration === generation) {
+          activeLoginGeneration = undefined;
+        }
       }
-      if (generation !== authorizationGeneration) return;
-      await checkAuthorization(generation);
     },
     revalidateAuthorization: async () => {
+      if (activeLoginGeneration !== undefined) return;
       const generation = ++authorizationGeneration;
       await checkAuthorization(generation);
     },

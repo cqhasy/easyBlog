@@ -85,6 +85,34 @@ describe("application bootstrap", () => {
     expect(root.innerHTML).toContain('data-page="dashboard" aria-current="page"');
   });
 
+  it("defers focus revalidation until a pending login confirms ready status", async () => {
+    const root = new AppDomRoot();
+    let resolveLogin: ((authorization: { state: "ready"; login: string }) => void) | undefined;
+    const status = vi.fn()
+      .mockResolvedValueOnce({ state: "unauthenticated", login: null })
+      .mockResolvedValueOnce({ state: "ready", login: "octocat" });
+    const controller = createAppController(root as unknown as HTMLElement, {
+      githubAuthorizationStatus: status,
+      startGithubLogin: () => new Promise((resolve) => {
+        resolveLogin = resolve;
+      }),
+    }, 1280);
+
+    await controller.start();
+    const authorization = controller.authorize();
+
+    await controller.revalidateAuthorization();
+
+    expect(status).toHaveBeenCalledTimes(1);
+    expect(root.innerHTML).toContain('data-startup-state="authorizing"');
+
+    resolveLogin?.({ state: "ready", login: "octocat" });
+    await authorization;
+
+    expect(status).toHaveBeenCalledTimes(2);
+    expect(root.innerHTML).toContain('data-page="dashboard" aria-current="page"');
+  });
+
   it("returns from a ready shell to Welcome after a later non-ready check", async () => {
     const root = new AppDomRoot();
     const status = vi.fn()
@@ -160,7 +188,21 @@ describe("application bootstrap", () => {
     expect(root.workbenchHTML).toContain("@octocat");
   });
 
-  it("routes sidebar toggles and a 960 pixel resize through the shell state", async () => {
+  it("switches an expanded sidebar to compact mode at 960 pixels", async () => {
+    const root = new AppDomRoot();
+    const controller = createAppController(root as unknown as HTMLElement, {
+      githubAuthorizationStatus: async () => ({ state: "ready", login: "octocat" }),
+      startGithubLogin: async () => ({ state: "ready", login: "octocat" }),
+    }, 1280);
+
+    await controller.start();
+    expect(root.innerHTML).toContain('data-sidebar-mode="expanded"');
+
+    controller.setViewportWidth(960);
+    expect(root.innerHTML).toContain('data-sidebar-mode="collapsed"');
+  });
+
+  it("routes sidebar toggles through the shell state", async () => {
     const root = new AppDomRoot();
     const controller = createAppController(root as unknown as HTMLElement, {
       githubAuthorizationStatus: async () => ({ state: "ready", login: "octocat" }),
@@ -169,9 +211,7 @@ describe("application bootstrap", () => {
 
     await controller.start();
     root.clickAction("toggle-sidebar");
-    expect(root.innerHTML).toContain('data-sidebar-mode="collapsed"');
 
-    controller.setViewportWidth(960);
     expect(root.innerHTML).toContain('data-sidebar-mode="collapsed"');
   });
 });

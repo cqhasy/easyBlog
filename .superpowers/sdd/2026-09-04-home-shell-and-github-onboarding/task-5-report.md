@@ -94,3 +94,69 @@ Result: passed with no whitespace errors.
 
 - Vite reports the existing production JavaScript chunk-size advisory (>500 kB after minification); it does not fail the build.
 - The pre-existing untracked `docs/superpowers/plans/2026-09-04-home-shell-and-github-onboarding.md` was not changed.
+
+## Fix Round 1: Focus During Pending Login
+
+### Changes
+
+- Added an `activeLoginGeneration` guard in `src/app/bootstrap.ts`.
+- `revalidateAuthorization()` now defers while an authorization login is pending, so a `window.focus` revalidation cannot advance the authorization generation and invalidate the login flow.
+- The login flow keeps that guard active through its mandatory final `githubAuthorizationStatus()` check, then releases it in `finally`.
+- Added a controller regression test with a manually deferred `startGithubLogin()` promise. It models the focus listener by calling `revalidateAuthorization()` while login is pending, verifies that no status check overtakes login, resolves login, and confirms Dashboard renders only after the final ready status check.
+- Corrected resize coverage to begin at `1280` with `data-sidebar-mode="expanded"` and prove that `setViewportWidth(960)` forces compact/collapsed B mode. Sidebar-toggle coverage remains in its own focused test.
+
+### TDD
+
+#### RED
+
+Added the deferred-login focus ordering test before changing `bootstrap.ts`.
+
+Command:
+
+```text
+npm test -- src/app/bootstrap.test.ts
+```
+
+Result: failed as expected. The new test expected one status call after focus revalidation during a pending login, but observed two:
+
+```text
+application bootstrap > defers focus revalidation until a pending login confirms ready status
+expected "spy" to be called 1 times, but got 2 times
+```
+
+#### GREEN
+
+Implemented the active-login defer guard and reran:
+
+```text
+npm test -- src/app/bootstrap.test.ts
+```
+
+Result: passed, with 1 test file and 9 tests passing.
+
+### Verification
+
+```text
+npm test -- src/app/bootstrap.test.ts src/bridge/targets.test.ts
+```
+
+Result: passed, with 2 test files and 13 tests passing.
+
+```text
+git diff --check
+```
+
+Result: passed with no whitespace errors.
+
+### Self-Review
+
+- A focus revalidation now returns without changing authorization generation while login is active.
+- Login still always performs its own fresh status check after `startGithubLogin()` resolves; no login command return value admits the shell.
+- The active-login guard remains in place until that status check settles, avoiding an ordering gap.
+- Existing ready-to-non-ready revalidation remains unchanged once no login is active.
+- The change is limited to the requested bootstrap controller, controller tests, and report. Bridge command names and APIs are untouched.
+
+### Concerns
+
+- The existing Vite chunk-size advisory remains unrelated to this focused controller fix.
+- The pre-existing untracked `docs/superpowers/plans/2026-09-04-home-shell-and-github-onboarding.md` remains untouched.
