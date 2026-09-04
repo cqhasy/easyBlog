@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { loadWorkbench, renderWorkbench } from "./index";
+import { loadWorkbench, mountWorkbench, renderWorkbench } from "./index";
 import type { Change, PublicationRecord, ScopeSummary } from "../../contracts";
 
 const scope: ScopeSummary = {
@@ -45,6 +45,31 @@ const change = (id: string): Change => ({
   snapshot: null,
 });
 
+class WorkbenchDomRoot {
+  innerHTML = "";
+  private clickHandler: ((event: MouseEvent) => void) | undefined;
+
+  addEventListener(type: string, listener: EventListenerOrEventListenerObject): void {
+    if (type === "click" && typeof listener === "function") {
+      this.clickHandler = listener as (event: MouseEvent) => void;
+    }
+  }
+
+  clickAction(action: string): void {
+    expect(this.innerHTML).toContain(`data-action="${action}"`);
+    this.clickHandler?.({
+      target: {
+        closest: <T extends HTMLElement>(selector: string): T | null =>
+          selector === "[data-action]" ? { dataset: { action } } as unknown as T : null,
+      },
+    } as unknown as MouseEvent);
+  }
+}
+
+async function flushDomUpdates(): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, 0));
+}
+
 describe("workbench", () => {
   it("renders an actionable pending-review state", () => {
     const html = renderWorkbench({
@@ -57,6 +82,7 @@ describe("workbench", () => {
     });
 
     expect(html).toContain("3 项待确认变更");
+    expect(html).toContain("内容工作台");
     expect(html).toContain('data-action="scan"');
     expect(html).toContain('data-action="open-changes"');
   });
@@ -97,6 +123,45 @@ describe("workbench", () => {
     });
 
     expect(state).toEqual({ status: "needs_target", scopeName: "文章" });
+  });
+
+  it("scans the active scope and opens its returned changes", async () => {
+    const root = new WorkbenchDomRoot();
+    const scanCalls: string[] = [];
+    let openedScopeId: string | undefined;
+
+    mountWorkbench(
+      root as unknown as HTMLElement,
+      {
+        listScopes: async () => [scope],
+        listChanges: async () => [],
+        scanScope: async (scopeId) => {
+          scanCalls.push(scopeId);
+          return {
+            scope_id: scopeId,
+            changes: [change("change-after-scan")],
+            scanned_at: "2026-09-04T08:15:00Z",
+          };
+        },
+        listPublications: async () => [],
+      },
+      {
+        openChanges: (scopeId) => {
+          openedScopeId = scopeId;
+        },
+        openSources: () => undefined,
+      },
+    );
+
+    await flushDomUpdates();
+    root.clickAction("scan");
+    await flushDomUpdates();
+
+    expect(scanCalls).toEqual(["scope-1"]);
+    expect(root.innerHTML).toContain('data-action="open-changes"');
+
+    root.clickAction("open-changes");
+    expect(openedScopeId).toBe("scope-1");
   });
 
   it("retains an actionable retry message after a loading failure", async () => {

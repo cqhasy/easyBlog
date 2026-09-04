@@ -112,7 +112,7 @@ function publicationSummary(publication: PublicationRecord | null): string {
 }
 
 export function renderWorkbench(state: WorkbenchState, scanning = false): string {
-  const header = `<header class="workbench-header"><div><p class="eyebrow">EASYBLOG / WORKBENCH</p><h1 id="workbench-title">工作台</h1></div></header>`;
+  const header = `<header class="workbench-header"><div><p class="eyebrow">内容工作台</p><h1 id="workbench-title">工作台</h1></div></header>`;
   if (state.status === "loading") {
     return `<section class="workbench-page" aria-labelledby="workbench-title">${header}<p class="workbench-loading" role="status">正在整理当前工作...</p></section>`;
   }
