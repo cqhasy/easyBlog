@@ -40,6 +40,7 @@ pub fn run() {
             health,
             commands::github::github_authorization_status,
             commands::github::start_github_login,
+            commands::github::github_login_status,
             commands::sources::add_source,
             commands::sources::list_sources,
             commands::targets::connect_target,
