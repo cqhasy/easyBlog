@@ -19,7 +19,7 @@ describe("app shell", () => {
     expect(html).toContain('data-sidebar-mode="collapsed"');
     expect(html).toContain('aria-label="History" title="History"');
     expect(html).toContain('data-page="history" aria-current="page"');
-    expect(html).not.toContain('class="app-topbar"');
+    expect(html).not.toMatch(/class="[^"]*\bapp-topbar\b[^"]*"/);
   });
 
   it("keeps the right workbench independent from the sidebar", () => {
@@ -29,9 +29,9 @@ describe("app shell", () => {
       /<aside class="app-sidebar"[^>]*>[\s\S]*<\/aside><main class="app-workbench"/,
     );
     expect(html.match(/<main\b/g)).toHaveLength(1);
-    expect(html).not.toContain('class="app-topbar"');
-    expect(html).not.toContain('class="github-status"');
-    expect(html).not.toContain('class="github-action"');
+    expect(html).not.toMatch(/class="[^"]*\bapp-topbar\b[^"]*"/);
+    expect(html).not.toMatch(/class="[^"]*\bgithub-status\b[^"]*"/);
+    expect(html).not.toMatch(/class="[^"]*\bgithub-action\b[^"]*"/);
     expect(html).not.toContain('data-github-status');
   });
 
