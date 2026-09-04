@@ -1,169 +1,233 @@
-import { mountChanges } from "../features/changes";
-import { mountChangeReview } from "../features/changes/review";
-import { mountSources } from "../features/sources";
-import { mountSourceEditor, mountTargetEditor } from "../features/sources/editor";
-import { mountHistory } from "../features/history";
-import { mountWorkbench } from "../features/workbench";
 import { githubAuthorizationStatus, startGithubLogin } from "../bridge/targets";
 import type { GithubAuthorization } from "../contracts";
-import { createViewState, type AppView } from "./view-state";
+import { renderAccount } from "../features/account";
+import { renderDashboard } from "../features/dashboard";
+import { mountHistory } from "../features/history";
+import { renderSettings } from "../features/settings";
+import { mountSources } from "../features/sources";
+import { mountSourceEditor, mountTargetEditor } from "../features/sources/editor";
+import { hydrateIcons } from "./icons";
+import { reduceStartupState, type StartupState } from "./startup-state";
+import { renderAppShell } from "./shell";
+import {
+  createViewState,
+  resolveSidebarMode,
+  type ShellPage,
+} from "./view-state";
 import "../styles.css";
 
-const pageLabels: Record<Extract<AppView["page"], "workbench" | "changes" | "sources" | "history">, string> = {
-  workbench: "工作台",
-  changes: "变更",
-  sources: "来源",
-  history: "历史",
+export type AppDependencies = {
+  githubAuthorizationStatus: typeof githubAuthorizationStatus;
+  startGithubLogin: typeof startGithubLogin;
 };
 
-function escapeHtml(value: string): string {
-  return value.replace(/[&<>"']/g, (character) =>
-    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[character] ?? character,
-  );
+export type AppController = {
+  start: () => Promise<void>;
+  authorize: () => Promise<void>;
+  revalidateAuthorization: () => Promise<void>;
+  navigate: (page: ShellPage) => void;
+  toggleSidebar: () => void;
+  setViewportWidth: (viewportWidth: number) => void;
+};
+
+function renderStartupSurface(state: StartupState): string {
+  if (state.kind === "checking") {
+    return '<main class="startup-screen" data-startup-state="checking"><section><h1>Welcome</h1><p>Checking GitHub authorization...</p></section></main>';
+  }
+  if (state.kind === "authorizing") {
+    return '<main class="startup-screen" data-startup-state="authorizing"><section><h1>Welcome</h1><p>Opening GitHub authorization...</p></section></main>';
+  }
+  if (state.kind === "error") {
+    return `<main class="startup-screen" data-startup-state="error"><section><h1>Welcome</h1><p>${state.message}</p><button type="button" data-action="retry-authorization">Retry authorization check</button></section></main>`;
+  }
+  if (state.kind !== "authorization-required") return "";
+
+  const message = state.message
+    ?? (state.reason === "missing-cli"
+      ? "GitHub CLI must be installed before you can continue."
+      : state.reason === "unavailable"
+        ? "GitHub authorization is temporarily unavailable."
+        : "Connect GitHub to continue.");
+  return `<main class="startup-screen" data-startup-state="authorization-required"><section><h1>Welcome</h1><p>${message}</p><button type="button" data-action="authorize-github">Authorize GitHub</button></section></main>`;
 }
 
-function githubAuthorizationMarkup(authorization: GithubAuthorization, loading = false): string {
-  const detail = authorization.state === "ready"
-    ? `已连接 @${authorization.login ?? "GitHub"}`
-    : authorization.state === "missing_cli"
-      ? "需要安装 GitHub CLI"
-      : authorization.state === "unavailable"
-        ? "暂时无法检查 GitHub"
-        : "尚未连接 GitHub";
-  const action = authorization.state === "ready"
-    ? '<button type="button" class="github-action" data-action="github-login">重新检查</button>'
-    : authorization.state === "missing_cli"
-      ? '<a class="github-action" href="https://cli.github.com/" target="_blank" rel="noreferrer">安装 gh</a>'
-      : `<button type="button" class="github-action" data-action="github-login" ${loading ? "disabled" : ""}>${loading ? "正在打开 GitHub..." : "连接 GitHub"}</button>`;
-  return `<div class="github-status"><strong>GitHub</strong><span>${escapeHtml(detail)}</span>${action}</div>`;
-}
+export function createAppController(
+  root: HTMLElement,
+  dependencies: AppDependencies,
+  initialViewportWidth: number,
+): AppController {
+  const viewState = createViewState({ page: "dashboard" });
+  let authorization: GithubAuthorization = { state: "unavailable", login: null };
+  let startupState: StartupState = { kind: "checking" };
+  let viewportWidth = initialViewportWidth;
+  let authorizationGeneration = 0;
+  let sourcesResourceId: string | undefined;
 
-export function renderAppShell(
-  view: AppView,
-  authorization: GithubAuthorization = { state: "unavailable", login: null },
-  authorizationLoading = false,
-): string {
-  const currentPage = view.page === "review" ? "changes" : view.page === "source-editor" || view.page === "target-editor" ? "sources" : view.page;
-  const nav = (Object.keys(pageLabels) as Array<keyof typeof pageLabels>).map((page) => {
-    const active = currentPage === page;
-    return `<button type="button" data-page="${page}" ${active ? 'class="is-active" aria-current="page"' : ""}>${pageLabels[page]}</button>`;
-  }).join("");
-  const pageLabel = pageLabels[currentPage as keyof typeof pageLabels] ?? "easyBlog";
-  return `<div class="app-shell"><aside class="app-nav" aria-label="主导航"><div class="app-brand" aria-label="easyBlog">easy<span>Blog</span></div><nav aria-label="页面导航">${nav}</nav></aside><section class="app-frame"><header class="app-topbar" aria-label="当前页面与 GitHub 状态" data-github-authorization><span class="app-page-label">${pageLabel}</span>${githubAuthorizationMarkup(authorization, authorizationLoading)}</header><main class="app-content" data-app-content aria-label="应用主内容"></main></section></div>`;
-}
-
-export function bootstrap(root: HTMLElement | null): void {
-  if (!root) return;
-
-  const viewState = createViewState({ page: "workbench" });
-  let githubAuthorization: GithubAuthorization = { state: "unavailable", login: null };
-  let githubAuthorizationLoading = false;
-  let githubAuthorizationGeneration = 0;
-
-  const renderShell = () => {
-    root.innerHTML = renderAppShell(viewState.current(), githubAuthorization, githubAuthorizationLoading);
-  };
-  const renderGithubAuthorization = () => {
-    const topbar = root.querySelector<HTMLElement>("[data-github-authorization]");
-    if (!topbar) return;
-    const view = viewState.current();
-    const currentPage = view.page === "review" ? "changes" : view.page === "source-editor" || view.page === "target-editor" ? "sources" : view.page;
-    const pageLabel = pageLabels[currentPage as keyof typeof pageLabels] ?? "easyBlog";
-    topbar.innerHTML = `<span class="app-page-label">${pageLabel}</span>${githubAuthorizationMarkup(githubAuthorization, githubAuthorizationLoading)}`;
-  };
-  const renderCurrentView = () => {
-    renderShell();
+  const renderCurrentPage = () => {
     const content = root.querySelector<HTMLElement>("[data-app-content]");
     if (!content) return;
     const view = viewState.current();
-    if (view.page === "workbench") {
-      mountWorkbench(content, undefined, {
-        openChanges: (scopeId) => navigate({ page: "changes", scopeId }),
-        openSources: () => navigate({ page: "sources" }),
-      });
-      return;
-    }
-    if (view.page === "changes") {
-      mountChanges(content, undefined, {
-        openReview: (context) => {
-          viewState.openReview(context.scopeId, context.selectedChangeIds, context.activeChangeId);
-          renderCurrentView();
-        },
-        openSources: () => navigate({ page: "sources" }),
-      }, {
-        scopeId: view.scopeId,
-        selectedChangeIds: view.selectedChangeIds,
-      });
-      return;
-    }
-    if (view.page === "review") {
-      mountChangeReview(content, undefined, {
-        scopeId: view.scopeId,
-        selectedChangeIds: view.selectedChangeIds,
-        activeChangeId: view.activeChangeId,
-      }, {
-        backToChanges: (context) => navigate({
-          page: "changes",
-          scopeId: context.scopeId,
-          selectedChangeIds: context.selectedChangeIds,
-        }),
-        openSources: () => navigate({ page: "sources" }),
-      });
-      return;
-    }
-    if (view.page === "sources") {
-      mountSources(content, undefined, {
-        openSourceEditor: (sourceId, scopeId) => navigate({ page: "source-editor", sourceId, scopeId }),
-        openTargetEditor: (targetId) => navigate({ page: "target-editor", targetId }),
-      }, view.resourceId);
-      return;
-    }
-    if (view.page === "source-editor") {
-      mountSourceEditor(content, undefined, view.sourceId, view.scopeId, {
-        backToSources: (resourceId) => navigate({ page: "sources", resourceId }),
-      });
-      return;
-    }
-    if (view.page === "target-editor") {
-      mountTargetEditor(content, undefined, view.targetId, {
-        backToSources: (resourceId) => navigate({ page: "sources", resourceId }),
-      });
+    if (view.page === "dashboard") {
+      content.innerHTML = renderDashboard();
       return;
     }
     if (view.page === "history") {
       mountHistory(content);
       return;
     }
-    content.innerHTML = `<section class="app-pending-view"><h1>此工作流将在后续步骤中提供。</h1></section>`;
+    if (view.page === "sources") {
+      mountSources(content, undefined, {
+        openSourceEditor: (sourceId, scopeId) => {
+          sourcesResourceId = sourceId;
+          viewState.navigate({ page: "source-editor", sourceId, scopeId });
+          render();
+        },
+        openTargetEditor: (targetId) => {
+          sourcesResourceId = targetId;
+          viewState.navigate({ page: "target-editor", targetId });
+          render();
+        },
+      }, sourcesResourceId);
+      return;
+    }
+    if (view.page === "source-editor") {
+      mountSourceEditor(content, undefined, view.sourceId, view.scopeId, {
+        backToSources: (resourceId) => {
+          sourcesResourceId = resourceId;
+          viewState.navigate({ page: "sources" });
+          render();
+        },
+      });
+      return;
+    }
+    if (view.page === "target-editor") {
+      mountTargetEditor(content, undefined, view.targetId, {
+        backToSources: (resourceId) => {
+          sourcesResourceId = resourceId;
+          viewState.navigate({ page: "sources" });
+          render();
+        },
+      });
+      return;
+    }
+    if (view.page === "settings") {
+      content.innerHTML = renderSettings();
+      return;
+    }
+    content.innerHTML = renderAccount(authorization, startupState.kind === "authorizing");
   };
-  const navigate = (next: AppView) => {
-    viewState.navigate(next);
-    renderCurrentView();
+
+  const render = () => {
+    if (startupState.kind !== "ready") {
+      root.innerHTML = renderStartupSurface(startupState);
+      return;
+    }
+    root.innerHTML = renderAppShell(
+      viewState.current(),
+      resolveSidebarMode(viewState.sidebarPreference(), viewportWidth),
+    );
+    hydrateIcons();
+    renderCurrentPage();
+  };
+
+  const transition = (event: Parameters<typeof reduceStartupState>[1]) => {
+    startupState = reduceStartupState(startupState, event);
+    render();
+  };
+
+  const checkAuthorization = async (generation: number): Promise<void> => {
+    transition({ type: "begin-check" });
+    try {
+      const nextAuthorization = await dependencies.githubAuthorizationStatus();
+      if (generation !== authorizationGeneration) return;
+      authorization = nextAuthorization;
+      transition({ type: "authorization-checked", authorization });
+    } catch {
+      if (generation !== authorizationGeneration) return;
+      transition({
+        type: "check-failed",
+        message: "GitHub authorization could not be checked. Please retry.",
+      });
+    }
+  };
+
+  const controller: AppController = {
+    start: async () => {
+      transition({ type: "begin-check" });
+      await controller.revalidateAuthorization();
+    },
+    authorize: async () => {
+      const generation = ++authorizationGeneration;
+      transition({ type: "begin-login" });
+      try {
+        await dependencies.startGithubLogin();
+      } catch {
+        if (generation !== authorizationGeneration) return;
+        transition({
+          type: "login-failed",
+          message: "GitHub authorization was not completed. Please try again.",
+        });
+        return;
+      }
+      if (generation !== authorizationGeneration) return;
+      await checkAuthorization(generation);
+    },
+    revalidateAuthorization: async () => {
+      const generation = ++authorizationGeneration;
+      await checkAuthorization(generation);
+    },
+    navigate: (page) => {
+      viewState.navigate({ page });
+      render();
+    },
+    toggleSidebar: () => {
+      viewState.setSidebarPreference(
+        viewState.sidebarPreference() === "expanded" ? "collapsed" : "expanded",
+      );
+      render();
+    },
+    setViewportWidth: (nextViewportWidth) => {
+      viewportWidth = nextViewportWidth;
+      render();
+    },
   };
 
   root.addEventListener("click", (event) => {
-    if ((event.target as HTMLElement).closest<HTMLButtonElement>("[data-action='github-login']")) {
-      void refreshGithubAuthorization(githubAuthorization.state !== "ready");
+    const target = event.target as HTMLElement;
+    const action = target.closest<HTMLElement>("[data-action]")?.dataset.action;
+    if (action === "toggle-sidebar") {
+      controller.toggleSidebar();
       return;
     }
-    const page = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-page]")?.dataset.page;
-    if (page === "workbench" || page === "changes" || page === "sources" || page === "history") navigate({ page });
-  });
-  const refreshGithubAuthorization = async (startLogin = false) => {
-    const requestGeneration = ++githubAuthorizationGeneration;
-    githubAuthorizationLoading = startLogin;
-    renderGithubAuthorization();
-    try {
-      const authorization = startLogin ? await startGithubLogin() : await githubAuthorizationStatus();
-      if (requestGeneration !== githubAuthorizationGeneration) return;
-      githubAuthorization = authorization;
-    } catch {
-      if (requestGeneration !== githubAuthorizationGeneration) return;
-      githubAuthorization = { state: "unavailable", login: null };
+    if (action === "authorize-github" || action === "reauthorize") {
+      void controller.authorize();
+      return;
     }
-    githubAuthorizationLoading = false;
-    renderGithubAuthorization();
-  };
-  renderCurrentView();
-  void refreshGithubAuthorization();
+    if (action === "retry-authorization") {
+      void controller.revalidateAuthorization();
+      return;
+    }
+    const page = target.closest<HTMLElement>("[data-page]")?.dataset.page;
+    if (page === "dashboard" || page === "history" || page === "sources" || page === "settings" || page === "account") {
+      controller.navigate(page);
+    }
+  });
+
+  return controller;
+}
+
+export function bootstrap(root: HTMLElement | null): void {
+  if (!root) return;
+
+  const controller = createAppController(root, {
+    githubAuthorizationStatus,
+    startGithubLogin,
+  }, window.innerWidth);
+  window.addEventListener("focus", () => {
+    void controller.revalidateAuthorization();
+  });
+  window.addEventListener("resize", () => {
+    controller.setViewportWidth(window.innerWidth);
+  });
+  void controller.start();
 }

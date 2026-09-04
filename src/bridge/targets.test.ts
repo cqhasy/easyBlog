@@ -28,7 +28,7 @@ describe("targets bridge", () => {
     expect(invoke).toHaveBeenNthCalledWith(2, "refresh_github_repository_permissions");
   });
 
-  it("checks and starts GitHub CLI authorization through Tauri", async () => {
+  it("supports mandatory GitHub onboarding through unchanged Tauri commands", async () => {
     invoke.mockResolvedValue({ state: "ready", login: "octocat" });
     await githubAuthorizationStatus();
     await startGithubLogin();
