@@ -1,6 +1,7 @@
 import { mountChanges } from "../features/changes";
 import { mountChangeReview } from "../features/changes/review";
 import { mountSources } from "../features/sources";
+import { mountSourceEditor, mountTargetEditor } from "../features/sources/editor";
 import { mountHistory } from "../features/history";
 import { mountWorkbench } from "../features/workbench";
 import { githubAuthorizationStatus, startGithubLogin } from "../bridge/targets";
@@ -111,7 +112,22 @@ export function bootstrap(root: HTMLElement | null): void {
       return;
     }
     if (view.page === "sources") {
-      mountSources(content, undefined, () => {});
+      mountSources(content, undefined, {
+        openSourceEditor: (sourceId, scopeId) => navigate({ page: "source-editor", sourceId, scopeId }),
+        openTargetEditor: (targetId) => navigate({ page: "target-editor", targetId }),
+      }, view.resourceId);
+      return;
+    }
+    if (view.page === "source-editor") {
+      mountSourceEditor(content, undefined, view.sourceId, view.scopeId, {
+        backToSources: (resourceId) => navigate({ page: "sources", resourceId }),
+      });
+      return;
+    }
+    if (view.page === "target-editor") {
+      mountTargetEditor(content, undefined, view.targetId, {
+        backToSources: (resourceId) => navigate({ page: "sources", resourceId }),
+      });
       return;
     }
     if (view.page === "history") {

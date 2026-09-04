@@ -8,6 +8,8 @@ import {
   formatSourcePath,
   loadSources,
   notifyScopesChanged,
+  renderResourceOverview,
+  renderResources,
   renderSources,
   scopeLabel,
 } from "./index";
@@ -18,6 +20,24 @@ const source: Source = {
   name: "Content",
   type: "local_directory",
   created_at: "2026-09-02T00:00:00Z",
+};
+
+const summary: ScopeSummary = {
+  scope: {
+    id: "scope-1",
+    source_id: source.id,
+    target_id: "target-1",
+    name: "Posts",
+    lifecycle: "active",
+    revision: 1,
+    selections: [],
+    include_patterns: [],
+    exclude_patterns: [],
+    created_at: source.created_at,
+    updated_at: source.created_at,
+  },
+  health: "ready",
+  diagnostics: [],
 };
 
 describe("sources feature", () => {
@@ -148,5 +168,23 @@ describe("sources feature", () => {
 
     expect(controller.isCurrent(first)).toBe(false);
     expect(controller.isCurrent(second)).toBe(true);
+  });
+
+  it("renders source and target resources without embedding an editor form", () => {
+    const html = renderResourceOverview({
+      kind: "source",
+      id: source.id,
+      source,
+      scopes: [summary],
+    });
+
+    expect(html).toContain('data-action="edit-source"');
+    expect(html).not.toContain('id="scope-form"');
+    expect(html).not.toContain('name="posts-directory"');
+  });
+
+  it("renders an actionable target-empty state", () => {
+    expect(renderResources({ status: "ready", sources: [source], targets: [] }))
+      .toContain('data-action="connect-target"');
   });
 });
