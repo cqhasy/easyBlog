@@ -266,6 +266,33 @@ describe("focused change review", () => {
     expect(html).toContain("@@ -1 +1 @@");
   });
 
+  it("renders added and deleted diff rows with semantic colors, markers, and line numbers", () => {
+    const preview = {
+      ...plan("batch-1"),
+      diffs: [{
+        path: "a.md",
+        kind: "modified" as const,
+        patch: "@@ -4,2 +4,2 @@\n unchanged\n-previous value\n+next value",
+      }],
+    };
+    const html = renderChangeReview({
+      status: "preview",
+      scope,
+      selectedChanges: [change("updated", "a")],
+      activeChangeId: "a",
+      activeView: "diff",
+      returnView: "summary",
+      plan: preview,
+      target,
+    });
+
+    expect(html).toContain('class="review-diff-line review-diff-line-deletion"');
+    expect(html).toContain('class="review-diff-line review-diff-line-addition"');
+    expect(html).toContain('class="review-diff-line review-diff-line-hunk"');
+    expect(html).toContain('class="review-diff-number" aria-hidden="true">5</span><span class="review-diff-number" aria-hidden="true"></span><span class="review-diff-content">previous value</span>');
+    expect(html).toContain('class="review-diff-number" aria-hidden="true"></span><span class="review-diff-number" aria-hidden="true">5</span><span class="review-diff-content">next value</span>');
+  });
+
   it("uses the review interaction treatment for recovery actions", () => {
     const html = renderChangeReview({
       status: "error",

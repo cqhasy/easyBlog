@@ -104,6 +104,47 @@ function renderTabs(activeView: ReviewView): string {
   }).join("")}</div>`;
 }
 
+type DiffLineKind = "addition" | "deletion" | "context" | "hunk" | "meta";
+
+function hunkLineNumbers(line: string): { oldLine: number; newLine: number } | undefined {
+  const match = line.match(/^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/);
+  return match ? { oldLine: Number(match[1]), newLine: Number(match[2]) } : undefined;
+}
+
+function renderDiffPatch(patch: string): string {
+  let oldLine = 0;
+  let newLine = 0;
+  const renderLine = (kind: DiffLineKind, content: string, previousLine = "", nextLine = "") =>
+    `<code class="review-diff-line review-diff-line-${kind}"><span class="review-diff-marker" aria-hidden="true">${kind === "addition" ? "+" : kind === "deletion" ? "-" : kind === "hunk" ? "@" : ""}</span><span class="review-diff-number" aria-hidden="true">${previousLine}</span><span class="review-diff-number" aria-hidden="true">${nextLine}</span><span class="review-diff-content">${escapeHtml(content)}</span></code>`;
+
+  return `<pre class="review-diff" aria-label="文件差异">${patch.split(/\r?\n/).map((line) => {
+    const hunk = hunkLineNumbers(line);
+    if (hunk) {
+      oldLine = hunk.oldLine;
+      newLine = hunk.newLine;
+      return renderLine("hunk", line);
+    }
+    if (line.startsWith("+++") || line.startsWith("---") || line.startsWith("diff ")) return renderLine("meta", line);
+    if (line.startsWith("+")) {
+      const result = renderLine("addition", line.slice(1), "", String(newLine));
+      newLine += 1;
+      return result;
+    }
+    if (line.startsWith("-")) {
+      const result = renderLine("deletion", line.slice(1), String(oldLine), "");
+      oldLine += 1;
+      return result;
+    }
+    if (line.startsWith(" ")) {
+      const result = renderLine("context", line.slice(1), String(oldLine), String(newLine));
+      oldLine += 1;
+      newLine += 1;
+      return result;
+    }
+    return renderLine("meta", line);
+  }).join("")}</pre>`;
+}
+
 function renderActiveContent(change: Change | undefined, view: ReviewView, plan?: ReleasePlan): string {
   const panel = (content: string) => `<section class="review-content" id="review-panel-${view}" role="tabpanel" aria-labelledby="review-tab-${view}" tabindex="0">${content}</section>`;
   if (!change) return panel("<p>请选择一项变更。</p>");
@@ -118,7 +159,7 @@ function renderActiveContent(change: Change | undefined, view: ReviewView, plan?
   if (view === "diff") {
     const matchingDiffs = plan?.diffs.filter((diff) => diff.path === change.source_path) ?? [];
     const displayedDiffs = matchingDiffs.length ? matchingDiffs : plan?.diffs ?? [];
-    return panel(`<h2>${escapeHtml(titleFor(change))}</h2>${displayedDiffs.length ? `<div class="review-diffs">${displayedDiffs.map((diff) => `<article><header><strong>${escapeHtml(diff.path)}</strong><span>${escapeHtml(fileChangeKindLabels[diff.kind])}</span></header><pre>${escapeHtml(diff.patch)}</pre></article>`).join("")}</div>` : `<p class="review-muted">生成预览后，这里会显示持久化的文件差异。</p>`}`);
+    return panel(`<h2>${escapeHtml(titleFor(change))}</h2>${displayedDiffs.length ? `<div class="review-diffs">${displayedDiffs.map((diff) => `<article><header><strong>${escapeHtml(diff.path)}</strong><span>${escapeHtml(fileChangeKindLabels[diff.kind])}</span></header>${renderDiffPatch(diff.patch)}</article>`).join("")}</div>` : `<p class="review-muted">生成预览后，这里会显示持久化的文件差异。</p>`}`);
   }
   return panel(`<p class="eyebrow">${escapeHtml(changeKindLabels[change.kind])}</p><h2>${escapeHtml(titleFor(change))}</h2><dl class="review-facts"><div><dt>来源路径</dt><dd>${escapeHtml(change.source_path)}</dd></div><div><dt>变更类型</dt><dd>${escapeHtml(changeKindLabels[change.kind])}</dd></div>${change.previous_path ? `<div><dt>原路径</dt><dd>${escapeHtml(change.previous_path)}</dd></div>` : ""}</dl><p class="review-note">${escapeHtml(changeNote(change))}</p>`);
 }
