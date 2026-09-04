@@ -154,3 +154,55 @@ The new focused regression tests were run before the implementation update:
 ### Concerns
 
 - No blocking concerns.
+
+## Fix Round 2
+
+### Status
+
+Completed.
+
+### Finding Addressed
+
+- Applied the blue-gray review interaction class to the error-recovery action
+  so retry and navigation recovery controls no longer inherit the legacy green
+  primary button treatment.
+
+### Changed Files
+
+- `src/features/changes/review.ts`
+- `src/features/changes/review.test.ts`
+
+### TDD Failure Observed
+
+- Before the production change, `uses the review interaction treatment for
+  recovery actions` failed because the rendered `retry-preview` button had no
+  `review-primary-button` class.
+
+### Exact Commands and Results
+
+- `npm test -- src/features/changes/index.test.ts src/features/changes/review.test.ts`
+  before the fix: exit code 1; 1 test failed and 12 tests passed because the
+  recovery action did not include `review-primary-button`.
+- `npm test -- src/features/changes/index.test.ts src/features/changes/review.test.ts`
+  after the fix: exit code 0; 2 test files and 13 tests passed.
+- `npm run build`: exit code 0; TypeScript check and Vite production build
+  passed.
+- `git diff --check`: exit code 0; no whitespace errors.
+- Commit hooks: `backend-format`, `frontend-build`, and `staged-whitespace`
+  all passed.
+
+### Commit
+
+- `b4b6b3d fix: style review recovery action`
+
+### Self-Review
+
+- Verified that recovery action names and existing retry, source-navigation,
+  and return behaviors are unchanged.
+- Verified the recovery action now uses the same review interaction treatment
+  as the focused selection and publish controls.
+- Verified no bridge payload or publish behavior was changed.
+
+### Concerns
+
+- No blocking concerns.
