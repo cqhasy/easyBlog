@@ -1,5 +1,5 @@
 use crate::{
-    providers::github::auth::{GithubAuth, GithubAuthError, GithubAuthStatus},
+    providers::github::auth::{GithubAuth, GithubAuthError, GithubAuthStatus, GithubLoginStatus},
     shared::errors::{AppError, AppResult},
 };
 use serde::Serialize;
@@ -12,6 +12,12 @@ pub struct GithubAuthorization {
 
 #[derive(Debug, PartialEq, Eq, Serialize)]
 pub struct GithubLoginLaunch {
+    pub state: &'static str,
+    pub device_code: String,
+}
+
+#[derive(Debug, PartialEq, Eq, Serialize)]
+pub struct GithubLoginProgress {
     pub state: &'static str,
 }
 
@@ -49,10 +55,19 @@ pub fn start_login() -> AppResult<GithubLoginLaunch> {
     start_login_with(GithubAuth::start_login)
 }
 
+pub fn login_status() -> GithubLoginProgress {
+    let state = match GithubAuth::login_status() {
+        GithubLoginStatus::Pending => "pending",
+        GithubLoginStatus::Ready => "ready",
+        GithubLoginStatus::Failed => "failed",
+    };
+    GithubLoginProgress { state }
+}
+
 fn start_login_with(
-    start: impl FnOnce() -> Result<(), GithubAuthError>,
+    start: impl FnOnce() -> Result<String, GithubAuthError>,
 ) -> AppResult<GithubLoginLaunch> {
-    start().map_err(|error| match error {
+    let device_code = start().map_err(|error| match error {
         GithubAuthError::MissingCli => error_for_state("missing_cli"),
         GithubAuthError::LoginFailed => AppError::new(
             "github_login_failed",
@@ -63,7 +78,10 @@ fn start_login_with(
             "GitHub is connected, but Git HTTPS credentials could not be prepared.",
         ),
     })?;
-    Ok(GithubLoginLaunch { state: "started" })
+    Ok(GithubLoginLaunch {
+        state: "started",
+        device_code,
+    })
 }
 
 pub fn prepare_git_credentials() -> AppResult<()> {
@@ -99,10 +117,16 @@ mod tests {
 
     #[test]
     fn acknowledges_a_started_login_without_checking_authorization() {
-        assert!(matches!(
-            start_login_with(|| Ok(())),
-            Ok(GithubLoginLaunch { state: "started" })
-        ));
+        let launch = start_login_with(|| Ok("534D-B889".into()))
+            .expect("a device code should start GitHub authorization");
+
+        assert_eq!(
+            launch,
+            GithubLoginLaunch {
+                state: "started",
+                device_code: "534D-B889".into(),
+            }
+        );
     }
 
     #[test]

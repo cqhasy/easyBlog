@@ -12,6 +12,11 @@ export interface GithubAuthorization {
 
 export interface GithubLoginLaunch {
   state: "started";
+  device_code: string;
+}
+
+export interface GithubLoginProgress {
+  state: "pending" | "ready" | "failed";
 }
 
 export interface Target {

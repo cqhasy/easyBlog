@@ -10,7 +10,7 @@ export type StartupState =
   | { kind: "checking" }
   | { kind: "authorization-required"; reason: AuthorizationReason; message?: string }
   | { kind: "authorizing" }
-  | { kind: "awaiting-browser-authorization" }
+  | { kind: "awaiting-browser-authorization"; deviceCode: string }
   | { kind: "ready"; account: { login: string | null } }
   | { kind: "error"; message: string };
 
@@ -19,8 +19,7 @@ export type StartupEvent =
   | { type: "authorization-checked"; authorization: GithubAuthorization }
   | { type: "check-failed"; message: string }
   | { type: "begin-login" }
-  | { type: "login-started" }
-  | { type: "authorization-expired" }
+  | { type: "login-started"; deviceCode: string }
   | { type: "login-failed"; message: string };
 
 export function startupStateForAuthorization(authorization: GithubAuthorization): StartupState {
@@ -53,13 +52,7 @@ export function reduceStartupState(current: StartupState, event: StartupEvent): 
     case "begin-login":
       return { kind: "authorizing" };
     case "login-started":
-      return { kind: "awaiting-browser-authorization" };
-    case "authorization-expired":
-      return {
-        kind: "authorization-required",
-        reason: "login-failed",
-        message: "GitHub 授权尚未完成，请在浏览器完成确认后重试。",
-      };
+      return { kind: "awaiting-browser-authorization", deviceCode: event.deviceCode };
     case "login-failed":
       return {
         kind: "authorization-required",

@@ -23,17 +23,17 @@ describe("startup state", () => {
   it("keeps an authorization launch in the browser handoff state", () => {
     expect(reduceStartupState(
       { kind: "authorizing" },
-      { type: "login-started" },
-    )).toEqual({ kind: "awaiting-browser-authorization" });
+      { type: "login-started", deviceCode: "534D-B889" },
+    )).toEqual({ kind: "awaiting-browser-authorization", deviceCode: "534D-B889" });
   });
 
   it("admits a browser handoff only after a confirmed ready status", () => {
     expect(reduceStartupState(
-      { kind: "awaiting-browser-authorization" },
+      { kind: "awaiting-browser-authorization", deviceCode: "534D-B889" },
       { type: "authorization-checked", authorization: { state: "unauthenticated", login: null } },
-    )).toEqual({ kind: "awaiting-browser-authorization" });
+    )).toEqual({ kind: "awaiting-browser-authorization", deviceCode: "534D-B889" });
     expect(reduceStartupState(
-      { kind: "awaiting-browser-authorization" },
+      { kind: "awaiting-browser-authorization", deviceCode: "534D-B889" },
       { type: "authorization-checked", authorization: { state: "ready", login: "octocat" } },
     )).toEqual({ kind: "ready", account: { login: "octocat" } });
   });

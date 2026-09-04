@@ -1,5 +1,5 @@
-import { githubAuthorizationStatus, startGithubLogin } from "../bridge/targets";
-import type { GithubAuthorization } from "../contracts";
+import { githubAuthorizationStatus, githubLoginStatus, startGithubLogin } from "../bridge/targets";
+import type { GithubAuthorization, GithubLoginProgress } from "../contracts";
 import { renderAccount } from "../features/account";
 import { renderDashboard } from "../features/dashboard";
 import { mountHistory } from "../features/history";
@@ -19,6 +19,7 @@ import "../styles.css";
 export type AppDependencies = {
   githubAuthorizationStatus: typeof githubAuthorizationStatus;
   startGithubLogin: typeof startGithubLogin;
+  githubLoginStatus?: typeof githubLoginStatus;
 };
 
 export type AppController = {
@@ -33,7 +34,6 @@ export type AppController = {
 };
 
 const browserAuthorizationPollIntervalMs = 2_000;
-const maximumBrowserAuthorizationPolls = 60;
 const startupBrand = '<div class="startup-brand"><img class="easyblog-mark" src="/easyblog-mark.png" alt="" /><span>EasyBlog</span></div>';
 
 function renderStartupSurface(state: StartupState): string {
@@ -44,7 +44,7 @@ function renderStartupSurface(state: StartupState): string {
     return `<main class="startup-screen" data-startup-state="authorizing"><section>${startupBrand}<h1>正在打开 GitHub 授权</h1><p>请稍候，EasyBlog 正在唤起默认浏览器。</p></section></main>`;
   }
   if (state.kind === "awaiting-browser-authorization") {
-    return `<main class="startup-screen" data-startup-state="awaiting-browser-authorization"><section>${startupBrand}<h1>需要 GitHub 授权</h1><p>已在默认浏览器中打开 GitHub 授权。完成确认后回到这里。</p><div class="startup-actions"><button type="button" data-action="confirm-authorization">我已完成授权</button><button type="button" class="secondary-button" data-action="authorize-github">再次打开 GitHub 授权</button></div></section></main>`;
+    return `<main class="startup-screen" data-startup-state="awaiting-browser-authorization"><section>${startupBrand}<h1>在 GitHub 中确认授权</h1><p>默认浏览器已打开 GitHub 授权页面。输入下面的一次性验证码后，完成确认并回到这里。</p><div class="device-code"><code>${state.deviceCode}</code><button type="button" class="icon-button" data-action="copy-device-code" title="复制验证码" aria-label="复制验证码"><i data-lucide="copy"></i></button></div><div class="startup-actions"><button type="button" data-action="confirm-authorization">我已完成授权</button><button type="button" class="secondary-button" data-action="authorize-github">重新打开授权页</button></div></section></main>`;
   }
   if (state.kind === "error") {
     return `<main class="startup-screen" data-startup-state="error"><section>${startupBrand}<h1>需要 GitHub 授权</h1><p>${state.message}</p><button type="button" data-action="retry-authorization">重新检查授权</button></section></main>`;
@@ -74,8 +74,11 @@ export function createAppController(
   let sourcesResourceId: string | undefined;
   let pageGeneration = 0;
   let browserAuthorizationPoll: ReturnType<typeof setInterval> | undefined;
-  let browserAuthorizationPolls = 0;
   let browserAuthorizationCheckInFlight = false;
+  const checkGithubLoginStatus = dependencies.githubLoginStatus ?? (async (): Promise<GithubLoginProgress> => {
+    const currentAuthorization = await dependencies.githubAuthorizationStatus();
+    return { state: currentAuthorization.state === "ready" ? "ready" : "pending" };
+  });
 
   const renderCurrentPage = () => {
     const content = root.querySelector<HTMLElement>("[data-app-content]");
@@ -172,7 +175,6 @@ export function createAppController(
       clearInterval(browserAuthorizationPoll);
       browserAuthorizationPoll = undefined;
     }
-    browserAuthorizationPolls = 0;
   };
 
   const transition = (event: Parameters<typeof reduceStartupState>[1]) => {
@@ -188,7 +190,6 @@ export function createAppController(
     options: {
       preserveReadyShell?: boolean;
       preserveBrowserHandoff?: boolean;
-      expireBrowserHandoff?: boolean;
     } = {},
   ): Promise<void> => {
     const keepReadyShell = options.preserveReadyShell && startupState.kind === "ready";
@@ -204,9 +205,6 @@ export function createAppController(
         return;
       }
       if (keepBrowserHandoff && authorization.state !== "ready") {
-        if (options.expireBrowserHandoff) {
-          transition({ type: "authorization-expired" });
-        }
         return;
       }
       transition({ type: "authorization-checked", authorization });
@@ -219,10 +217,7 @@ export function createAppController(
     }
   };
 
-  const checkBrowserAuthorization = async (
-    generation: number,
-    expireBrowserHandoff = false,
-  ): Promise<void> => {
+  const checkBrowserAuthorization = async (generation: number): Promise<void> => {
     if (
       browserAuthorizationCheckInFlight
       || generation !== authorizationGeneration
@@ -232,10 +227,17 @@ export function createAppController(
     }
     browserAuthorizationCheckInFlight = true;
     try {
-      await checkAuthorization(generation, {
-        preserveBrowserHandoff: true,
-        expireBrowserHandoff,
-      });
+      const login = await checkGithubLoginStatus();
+      if (generation !== authorizationGeneration) return;
+      if (login.state === "pending") return;
+      if (login.state === "failed") {
+        transition({
+          type: "login-failed",
+          message: "GitHub 授权未完成，请重新发起授权。",
+        });
+        return;
+      }
+      await checkAuthorization(generation);
     } finally {
       browserAuthorizationCheckInFlight = false;
     }
@@ -251,11 +253,7 @@ export function createAppController(
         clearBrowserAuthorizationPolling();
         return;
       }
-      browserAuthorizationPolls += 1;
-      void checkBrowserAuthorization(
-        generation,
-        browserAuthorizationPolls >= maximumBrowserAuthorizationPolls,
-      );
+      void checkBrowserAuthorization(generation);
     }, browserAuthorizationPollIntervalMs);
   };
 
@@ -271,9 +269,9 @@ export function createAppController(
       clearBrowserAuthorizationPolling();
       transition({ type: "begin-login" });
       try {
-        await dependencies.startGithubLogin();
+        const launch = await dependencies.startGithubLogin();
         if (generation !== authorizationGeneration) return;
-        transition({ type: "login-started" });
+        transition({ type: "login-started", deviceCode: launch.device_code });
         startBrowserAuthorizationPolling(generation);
       } catch {
         if (generation !== authorizationGeneration) return;
@@ -343,6 +341,10 @@ export function createAppController(
       void controller.confirmAuthorization();
       return;
     }
+    if (action === "copy-device-code" && startupState.kind === "awaiting-browser-authorization") {
+      void navigator.clipboard?.writeText(startupState.deviceCode);
+      return;
+    }
     if (action === "retry-authorization") {
       void controller.revalidateAuthorization();
       return;
@@ -362,6 +364,7 @@ export function bootstrap(root: HTMLElement | null): void {
   const controller = createAppController(root, {
     githubAuthorizationStatus,
     startGithubLogin,
+    githubLoginStatus,
   }, window.innerWidth);
   window.addEventListener("focus", () => {
     void controller.revalidateAuthorization();

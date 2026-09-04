@@ -129,7 +129,7 @@ describe("application bootstrap", () => {
     const root = new AppDomRoot();
     const controller = createAppController(root as unknown as HTMLElement, {
       githubAuthorizationStatus: async () => ({ state: "unauthenticated", login: null }),
-      startGithubLogin: async () => ({ state: "started" }),
+      startGithubLogin: async () => ({ state: "started", device_code: "534D-B889" }),
     }, 1280);
 
     await controller.start();
@@ -147,7 +147,8 @@ describe("application bootstrap", () => {
       .mockResolvedValueOnce({ state: "ready", login: "octocat" });
     const controller = createAppController(root as unknown as HTMLElement, {
       githubAuthorizationStatus: status,
-      startGithubLogin: async () => ({ state: "started" }),
+      startGithubLogin: async () => ({ state: "started", device_code: "534D-B889" }),
+      githubLoginStatus: async () => ({ state: "ready" }),
     }, 1280);
 
     await controller.start();
@@ -169,7 +170,7 @@ describe("application bootstrap", () => {
       .mockResolvedValueOnce({ state: "ready", login: "octocat" });
     const controller = createAppController(root as unknown as HTMLElement, {
       githubAuthorizationStatus: status,
-      startGithubLogin: async () => ({ state: "started" } as never),
+      startGithubLogin: async () => ({ state: "started", device_code: "534D-B889" } as never),
     }, 1280);
 
     await controller.start();
@@ -178,8 +179,56 @@ describe("application bootstrap", () => {
     expect(status).toHaveBeenCalledOnce();
     expect(root.innerHTML).toContain('data-startup-state="awaiting-browser-authorization"');
     expect(root.innerHTML).toContain('data-action="confirm-authorization"');
+    expect(root.innerHTML).toContain("534D-B889");
+    expect(root.innerHTML).toContain('data-action="copy-device-code"');
     expect(root.innerHTML).not.toContain('class="app-shell"');
     controller.dispose();
+  });
+
+  it("keeps the device-code surface open while GitHub authorization remains pending", async () => {
+    vi.useFakeTimers();
+    try {
+      const root = new AppDomRoot();
+      const controller = createAppController(root as unknown as HTMLElement, {
+        githubAuthorizationStatus: async () => ({ state: "unauthenticated", login: null }),
+        startGithubLogin: async () => ({ state: "started", device_code: "534D-B889" }),
+      }, 1280);
+
+      await controller.start();
+      await controller.authorize();
+      await vi.advanceTimersByTimeAsync(120_000);
+
+      expect(root.innerHTML).toContain('data-startup-state="awaiting-browser-authorization"');
+      expect(root.innerHTML).toContain("534D-B889");
+      controller.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not treat a previous GitHub login as completion of a fresh authorization", async () => {
+    vi.useFakeTimers();
+    try {
+      const root = new AppDomRoot();
+      const status = vi.fn()
+        .mockResolvedValueOnce({ state: "unauthenticated", login: null })
+        .mockResolvedValueOnce({ state: "ready", login: "octocat" });
+      const controller = createAppController(root as unknown as HTMLElement, {
+        githubAuthorizationStatus: status,
+        startGithubLogin: async () => ({ state: "started", device_code: "534D-B889" }),
+        githubLoginStatus: async () => ({ state: "pending", message: null }),
+      } as Parameters<typeof createAppController>[1], 1280);
+
+      await controller.start();
+      await controller.authorize();
+      await vi.advanceTimersByTimeAsync(2_000);
+
+      expect(root.innerHTML).toContain('data-startup-state="awaiting-browser-authorization"');
+      expect(root.innerHTML).toContain("534D-B889");
+      controller.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("stops browser authorization polling after confirmation and disposal", async () => {
@@ -191,7 +240,8 @@ describe("application bootstrap", () => {
         .mockResolvedValueOnce({ state: "ready", login: "octocat" });
       const controller = createAppController(root as unknown as HTMLElement, {
         githubAuthorizationStatus: status,
-        startGithubLogin: async () => ({ state: "started" }),
+        startGithubLogin: async () => ({ state: "started", device_code: "534D-B889" }),
+        githubLoginStatus: async () => ({ state: "ready" }),
       }, 1280);
 
       await controller.start();
@@ -208,7 +258,7 @@ describe("application bootstrap", () => {
       const pendingStatus = vi.fn().mockResolvedValue({ state: "unauthenticated", login: null });
       const pendingController = createAppController(pendingRoot as unknown as HTMLElement, {
         githubAuthorizationStatus: pendingStatus,
-        startGithubLogin: async () => ({ state: "started" }),
+        startGithubLogin: async () => ({ state: "started", device_code: "534D-B889" }),
       }, 1280);
 
       await pendingController.start();
@@ -224,7 +274,7 @@ describe("application bootstrap", () => {
 
   it("defers focus revalidation until a pending login confirms ready status", async () => {
     const root = new AppDomRoot();
-    let resolveLogin: ((launch: { state: "started" }) => void) | undefined;
+    let resolveLogin: ((launch: { state: "started"; device_code: string }) => void) | undefined;
     const status = vi.fn()
       .mockResolvedValueOnce({ state: "unauthenticated", login: null })
       .mockResolvedValueOnce({ state: "ready", login: "octocat" });
@@ -233,6 +283,7 @@ describe("application bootstrap", () => {
       startGithubLogin: () => new Promise((resolve) => {
         resolveLogin = resolve;
       }),
+      githubLoginStatus: async () => ({ state: "ready" }),
     }, 1280);
 
     await controller.start();
@@ -243,7 +294,7 @@ describe("application bootstrap", () => {
     expect(status).toHaveBeenCalledTimes(1);
     expect(root.innerHTML).toContain('data-startup-state="authorizing"');
 
-    resolveLogin?.({ state: "started" });
+    resolveLogin?.({ state: "started", device_code: "534D-B889" });
     await authorization;
 
     expect(status).toHaveBeenCalledOnce();
@@ -262,7 +313,7 @@ describe("application bootstrap", () => {
       .mockResolvedValueOnce({ state: "unauthenticated", login: null });
     const controller = createAppController(root as unknown as HTMLElement, {
       githubAuthorizationStatus: status,
-      startGithubLogin: async () => ({ state: "started" }),
+      startGithubLogin: async () => ({ state: "started", device_code: "534D-B889" }),
     }, 1280);
 
     await controller.start();
@@ -279,7 +330,7 @@ describe("application bootstrap", () => {
       .mockResolvedValueOnce({ state: "ready", login: "octocat" });
     const controller = createAppController(root as unknown as HTMLElement, {
       githubAuthorizationStatus: status,
-      startGithubLogin: async () => ({ state: "started" }),
+      startGithubLogin: async () => ({ state: "started", device_code: "534D-B889" }),
     }, 1280);
 
     await controller.start();
@@ -313,7 +364,7 @@ describe("application bootstrap", () => {
     const status = vi.fn()
       .mockResolvedValueOnce({ state: "ready", login: "octocat" })
       .mockResolvedValueOnce({ state: "ready", login: "octocat" });
-    const login = vi.fn().mockResolvedValue({ state: "started" });
+    const login = vi.fn().mockResolvedValue({ state: "started", device_code: "534D-B889" });
     const controller = createAppController(root as unknown as HTMLElement, {
       githubAuthorizationStatus: status,
       startGithubLogin: login,
@@ -334,7 +385,7 @@ describe("application bootstrap", () => {
     const root = new AppDomRoot();
     const controller = createAppController(root as unknown as HTMLElement, {
       githubAuthorizationStatus: async () => ({ state: "ready", login: "octocat" }),
-      startGithubLogin: async () => ({ state: "started" }),
+      startGithubLogin: async () => ({ state: "started", device_code: "534D-B889" }),
     }, 1280);
 
     await controller.start();
@@ -348,7 +399,7 @@ describe("application bootstrap", () => {
     const root = new AppDomRoot();
     const controller = createAppController(root as unknown as HTMLElement, {
       githubAuthorizationStatus: async () => ({ state: "ready", login: "octocat" }),
-      startGithubLogin: async () => ({ state: "started" }),
+      startGithubLogin: async () => ({ state: "started", device_code: "534D-B889" }),
     }, 1001);
 
     await controller.start();
@@ -362,7 +413,7 @@ describe("application bootstrap", () => {
     const root = new AppDomRoot();
     const controller = createAppController(root as unknown as HTMLElement, {
       githubAuthorizationStatus: async () => ({ state: "ready", login: "octocat" }),
-      startGithubLogin: async () => ({ state: "started" }),
+      startGithubLogin: async () => ({ state: "started", device_code: "534D-B889" }),
     }, 1280);
 
     await controller.start();
@@ -376,7 +427,7 @@ describe("application bootstrap", () => {
     const status = vi.fn().mockResolvedValue({ state: "ready", login: "octocat" });
     const controller = createAppController(root as unknown as HTMLElement, {
       githubAuthorizationStatus: status,
-      startGithubLogin: async () => ({ state: "started" }),
+      startGithubLogin: async () => ({ state: "started", device_code: "534D-B889" }),
     }, 1280);
 
     await controller.start();
@@ -408,7 +459,7 @@ describe("application bootstrap", () => {
     const root = new AppDomRoot();
     const controller = createAppController(root as unknown as HTMLElement, {
       githubAuthorizationStatus: async () => ({ state: "ready", login: "octocat" }),
-      startGithubLogin: async () => ({ state: "started" }),
+      startGithubLogin: async () => ({ state: "started", device_code: "534D-B889" }),
     }, 1280);
 
     await controller.start();

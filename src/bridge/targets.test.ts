@@ -31,7 +31,7 @@ describe("targets bridge", () => {
   it("starts the browser handoff through the GitHub onboarding command", async () => {
     invoke
       .mockResolvedValueOnce({ state: "unauthenticated", login: null })
-      .mockResolvedValueOnce({ state: "started" });
+      .mockResolvedValueOnce({ state: "started", device_code: "534D-B889" });
     await githubAuthorizationStatus();
     await startGithubLogin();
     expect(invoke).toHaveBeenNthCalledWith(1, "github_authorization_status");
