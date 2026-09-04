@@ -26,6 +26,7 @@ function legacyRecord(): PublicationRecord {
     change_ids: [],
     state: "legacy",
     published_at: "2026-09-03T00:00:00Z",
+    recovery_reason: "This legacy release cannot be rolled back.",
     rollback_commit_sha: null,
     rolled_back_at: null,
   };
@@ -75,6 +76,7 @@ describe("history", () => {
     const html = renderHistory([legacyRecord()]);
 
     expect(html).toContain("旧版发布记录没有可安全执行的文件操作清单。");
+    expect(html).not.toContain("This legacy release cannot be rolled back.");
     expect(html).not.toContain('data-action="confirm-rollback"');
   });
 
@@ -119,6 +121,30 @@ describe("history", () => {
 
     expect(rollback).toHaveBeenCalledOnce();
     resolveRefresh([]);
+  });
+
+  it("refreshes a rejected rollback into a retryable pending action", async () => {
+    const root = new HistoryDomRoot();
+    const pendingRollback = { ...publishedRecord(), state: "rollback_pending" as const, rollback_commit_sha: "reverse-commit" };
+    const listPublications = vi.fn()
+      .mockResolvedValueOnce([publishedRecord()])
+      .mockResolvedValueOnce([pendingRollback]);
+
+    mountHistory(root as unknown as HTMLElement, {
+      listPublications,
+      retryRelease: async () => undefined,
+      rollbackPublication: async () => { throw new Error("push failed"); },
+    });
+
+    await flushDomUpdates();
+    root.clickAction("confirm-rollback", "batch-published");
+    await flushDomUpdates();
+    await flushDomUpdates();
+
+    expect(listPublications).toHaveBeenCalledTimes(2);
+    expect(root.innerHTML).toContain("提交 published-commit 的回滚未完成，回滚提交会保留以便重试。");
+    expect(root.innerHTML).toContain('data-action="retry"');
+    expect(root.innerHTML).toContain("重试回滚推送");
   });
 
   it("closes the rollback dialog when canceled without a batch identifier", async () => {

@@ -17,8 +17,8 @@ export function historyActionFor(record: PublicationRecord): HistoryAction | und
 }
 
 function unavailableReasonFor(record: PublicationRecord): string {
-  if (record.recovery_reason) return record.recovery_reason;
   if (record.state === "legacy") return "旧版发布记录没有可安全执行的文件操作清单。";
+  if (record.recovery_reason) return record.recovery_reason;
   if (record.state === "recovery_required") return "此记录需要恢复处理后才能继续。";
   if (record.state === "published" && record.rollback_available === false) return "此发布记录没有可安全执行的回滚操作清单。";
   return "";
@@ -48,9 +48,10 @@ export function renderHistory(records: PublicationRecord[], message = ""): strin
 export function mountHistory(root: HTMLElement, api: HistoryApi = { listPublications, retryRelease, rollbackPublication }): void {
   let records: PublicationRecord[] = []; let message = ""; let operationPending = false;
   const render = () => { root.innerHTML = renderHistory(records, message); };
-  const refresh = (releaseOperation = false) => {
+  const refresh = (releaseOperation = false, nextMessage = "") => {
     void api.listPublications().then((value) => {
       records = value;
+      if (nextMessage) message = nextMessage;
       if (releaseOperation) operationPending = false;
       render();
     }).catch(() => {
@@ -69,8 +70,12 @@ export function mountHistory(root: HTMLElement, api: HistoryApi = { listPublicat
       message = action === "retry" ? "发布已推送。" : "回滚提交已推送。";
       refresh(true);
     }).catch(() => {
+      if (action === "rollback") {
+        refresh(true, `提交 ${record.commit_sha} 的回滚未完成，回滚提交会保留以便重试。`);
+        return;
+      }
       operationPending = false;
-      message = action === "retry" ? "重试推送未完成。" : `提交 ${record.commit_sha} 的回滚未完成，回滚提交会保留以便重试。`;
+      message = "重试推送未完成。";
       render();
     });
   };
