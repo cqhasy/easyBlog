@@ -19,6 +19,7 @@ export type ChangesNavigation = {
     activeChangeId: string;
   }) => void;
   openSources: () => void;
+  backToDashboard: () => void;
 };
 
 export type ChangesState =
@@ -105,7 +106,7 @@ function renderGroups(changes: Change[], selected: Set<string>): string {
 }
 
 export function renderChanges(state: ChangesState, selected = new Set<string>(), scanning = false, scopes: ScopeSummary[] = []): string {
-  const header = `<header class="changes-header"><div><p class="eyebrow">发布评审</p><h1 id="changes-title">待发布变更</h1><p>先检测，再选择本次需要评审的内容。</p></div></header>`;
+  const header = `<header class="changes-header"><button type="button" class="back-button changes-back-button" data-action="back-to-dashboard" aria-label="返回 Dashboard" title="返回 Dashboard"><i data-lucide="arrow-left" aria-hidden="true"></i></button><div><p class="eyebrow">发布评审</p><h1 id="changes-title">待发布变更</h1><p>先检测，再选择本次需要评审的内容。</p></div></header>`;
   if (state.status === "loading") return `<section class="changes-page" aria-labelledby="changes-title">${header}<p class="changes-loading" role="status">正在整理待发布内容...</p></section>`;
   if (state.status === "error") return `<section class="changes-page" aria-labelledby="changes-title">${header}<section class="changes-message" role="alert"><strong>暂时无法打开变更清单</strong><p>${escapeHtml(state.message)}</p><button type="button" data-action="retry">重试</button></section></section>`;
   if (state.status === "needs_scope") return `<section class="changes-page" aria-labelledby="changes-title">${header}<section class="changes-empty"><span class="empty-mark" aria-hidden="true">+</span><h2>先添加一个同步范围</h2><p>范围确定了 easyBlog 要检查哪些内容。</p></section></section>`;
@@ -164,6 +165,7 @@ export function mountChanges(
   api: ChangesApi = { listScopes, scanScope, listChanges, listTargets },
   navigation: ChangesNavigation,
   initialContext: { scopeId?: ScopeId; selectedChangeIds?: string[] } = {},
+  onRendered: () => void = () => undefined,
 ): ChangesController {
   let state: ChangesState = { status: "loading" };
   let selected = new Set(initialContext.selectedChangeIds);
@@ -171,7 +173,10 @@ export function mountChanges(
   let scopes: ScopeSummary[] = [];
   let currentScopeId = initialContext.scopeId;
   let selectedScopeId = initialContext.selectedChangeIds ? initialContext.scopeId : undefined;
-  const render = () => { root.innerHTML = renderChanges(state, selected, scanning, scopes); };
+  const render = () => {
+    root.innerHTML = renderChanges(state, selected, scanning, scopes);
+    onRendered();
+  };
   const refreshController = createChangesRefreshController(api, (nextState, nextScopes) => {
     state = nextState;
     scopes = nextScopes;
@@ -211,6 +216,7 @@ export function mountChanges(
   root.addEventListener("click", (event) => {
     const actionElement = (event.target as HTMLElement).closest<HTMLElement>("[data-action]");
     const action = actionElement?.dataset.action;
+    if (action === "back-to-dashboard") { navigation.backToDashboard(); return; }
     if (action === "retry") { void refresh(); return; }
     if (action === "open-review" && state.status === "ready") {
       const changeId = actionElement?.dataset.changeId;

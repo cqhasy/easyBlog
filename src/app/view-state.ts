@@ -4,6 +4,7 @@ export type SidebarMode = "expanded" | "collapsed";
 
 export type AppView =
   | { page: ShellPage }
+  | { page: "changes"; scopeId?: string }
   | { page: "source-editor"; sourceId: string; scopeId?: string }
   | { page: "target-editor"; targetId: string };
 
@@ -25,6 +26,7 @@ export function pageForNavigation(view: AppView): ShellPage {
   if (view.page === "source-editor" || view.page === "target-editor") {
     return "sources";
   }
+  if (view.page === "changes") return "dashboard";
   return view.page;
 }
 

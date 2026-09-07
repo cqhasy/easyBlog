@@ -8,7 +8,18 @@ const releaseBridge = vi.hoisted(() => ({
   rollbackPublication: vi.fn(),
 }));
 
+const dashboardBridge = vi.hoisted(() => ({
+  listScopes: vi.fn(),
+  listChanges: vi.fn(),
+  scanScope: vi.fn(),
+}));
+
 vi.mock("../bridge/releases", () => releaseBridge);
+vi.mock("../bridge/changes", () => dashboardBridge);
+vi.mock("../bridge/sources", async (importOriginal) => ({
+  ...await importOriginal<typeof import("../bridge/sources")>(),
+  listScopes: dashboardBridge.listScopes,
+}));
 
 import { createAppController } from "./bootstrap";
 
@@ -22,11 +33,11 @@ class AppDomWorkbench {
     }
   }
 
-  clickAction(action: string, batchId?: string): void {
+  clickAction(action: string, batchId?: string, scopeId?: string): void {
     expect(this.innerHTML).toContain(`data-action="${action}"`);
     const dialog = { close: vi.fn() };
     const target = {
-      dataset: batchId ? { action, batchId } : { action },
+      dataset: { action, ...(batchId ? { batchId } : {}), ...(scopeId ? { scopeId } : {}) },
       closest: <T extends HTMLElement>(selector: string): T | null =>
         selector === "[data-action]" ? target as unknown as T : selector === "dialog" ? dialog as unknown as T : null,
     };
@@ -125,6 +136,71 @@ function publishedRecord() {
 }
 
 describe("application bootstrap", () => {
+  it("opens source-filtered Changes from a Dashboard source route", async () => {
+    dashboardBridge.listScopes.mockReset();
+    dashboardBridge.listChanges.mockReset();
+    dashboardBridge.scanScope.mockReset();
+    dashboardBridge.listScopes.mockResolvedValue([{
+      scope: {
+        id: "scope-1",
+        source_id: "source-1",
+        target_id: null,
+        name: "Product Notes",
+        lifecycle: "active",
+        revision: 1,
+        selections: [],
+        include_patterns: [],
+        exclude_patterns: [],
+        created_at: "now",
+        updated_at: "now",
+      },
+      health: "ready",
+      diagnostics: [],
+    }]);
+    dashboardBridge.listChanges.mockResolvedValue([{
+      id: "change-1",
+      scope_id: "scope-1",
+      kind: "updated",
+      source_identity: "product-notes.md",
+      source_path: "product-notes.md",
+      previous_path: null,
+      title: "Product Notes",
+      selected: true,
+      blocked_reason: null,
+      snapshot: null,
+    }]);
+    dashboardBridge.scanScope.mockResolvedValue({ changes: [], scanned_at: "2026-09-07T10:42:00Z" });
+    const root = new AppDomRoot();
+    const controller = createAppController(root as unknown as HTMLElement, {
+      githubAuthorizationStatus: async () => ({ state: "ready", login: "octocat" }),
+      startGithubLogin: async () => ({ state: "started", device_code: "534D-B889" }),
+    }, 1280);
+
+    await controller.start();
+    await flushDomUpdates();
+    root.workbench.clickAction("check-all");
+    await flushDomUpdates();
+    await flushDomUpdates();
+    root.workbench.clickAction("open-source", undefined, "scope-1");
+    await flushDomUpdates();
+
+    expect(root.innerHTML).toContain('data-page="dashboard" aria-current="page"');
+    expect(root.workbenchHTML).toContain('id="changes-title"');
+    expect(root.workbenchHTML).toContain("待发布变更");
+
+    root.workbench.clickAction("back-to-dashboard");
+    await flushDomUpdates();
+
+    expect(root.workbenchHTML).toContain('id="dashboard-title"');
+    expect(root.workbenchHTML).toContain(new Intl.DateTimeFormat("zh-CN", {
+      month: "numeric",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    }).format(new Date("2026-09-07T10:42:00Z")));
+  });
+
   it("shows Welcome while authorization is required and never mounts the app shell", async () => {
     const root = new AppDomRoot();
     const controller = createAppController(root as unknown as HTMLElement, {
@@ -471,6 +547,7 @@ describe("application bootstrap", () => {
     }, 1280);
 
     await controller.start();
+    await flushDomUpdates();
     const editorWorkbench = root.workbench;
     root.workbenchHTML = '<input name="scope-name" value="Unsaved draft" />';
 

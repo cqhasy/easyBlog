@@ -3,12 +3,20 @@ import {
   createViewState,
   pageForNavigation,
   resolveSidebarMode,
+  type AppView,
 } from "./view-state";
 
 describe("app view state", () => {
   it("maps focused source editor routes back to Sources navigation", () => {
     expect(pageForNavigation({ page: "source-editor", sourceId: "source-1" })).toBe("sources");
     expect(pageForNavigation({ page: "target-editor", targetId: "target-1" })).toBe("sources");
+  });
+
+  it("keeps Dashboard active for source-filtered Changes routes", () => {
+    expect(pageForNavigation({
+      page: "changes",
+      scopeId: "scope-1",
+    } as unknown as AppView)).toBe("dashboard");
   });
 
   it("collapses the sidebar for narrow desktop widths without changing preference", () => {

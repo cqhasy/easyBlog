@@ -82,6 +82,45 @@ describe("changes workspace", () => {
     expect(html).toContain('class="changes-operation" role="status" aria-live="polite">正在检测变更...</p>');
   });
 
+  it("provides a Dashboard return route", async () => {
+    const root = new ChangesDomRoot();
+    const backToDashboard = vi.fn();
+
+    mountChanges(root as unknown as HTMLElement, {
+      listScopes: async () => [scope],
+      listChanges: async () => [change("added")],
+      scanScope: async () => ({ changes: [], scanned_at: "now" }),
+    }, {
+      openReview: () => undefined,
+      openSources: () => undefined,
+      backToDashboard,
+    });
+
+    await flushDomUpdates();
+    root.clickAction("back-to-dashboard");
+
+    expect(backToDashboard).toHaveBeenCalledOnce();
+  });
+
+  it("notifies the shell after rendering so icons can be hydrated", async () => {
+    const root = new ChangesDomRoot();
+    const onRendered = vi.fn();
+
+    mountChanges(root as unknown as HTMLElement, {
+      listScopes: async () => [scope],
+      listChanges: async () => [change("added")],
+      scanScope: async () => ({ changes: [], scanned_at: "now" }),
+    }, {
+      openReview: () => undefined,
+      openSources: () => undefined,
+      backToDashboard: () => undefined,
+    }, {}, onRendered);
+
+    await flushDomUpdates();
+
+    expect(onRendered).toHaveBeenCalled();
+  });
+
   it("opens review in the explicit selected order rather than backend list order", async () => {
     const root = new ChangesDomRoot();
     let reviewContext: { scopeId: string; selectedChangeIds: string[]; activeChangeId: string } | undefined;
@@ -96,6 +135,7 @@ describe("changes workspace", () => {
       {
         openReview: (context) => { reviewContext = context; },
         openSources: () => undefined,
+        backToDashboard: () => undefined,
       },
       { scopeId: scope.scope.id, selectedChangeIds: ["b", "a"] },
     );
