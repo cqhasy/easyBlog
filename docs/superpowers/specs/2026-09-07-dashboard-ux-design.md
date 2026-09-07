@@ -1,6 +1,6 @@
 # Dashboard UX Design
 
-**Status:** Wireframe confirmed; visual design in discussion
+**Status:** Visual design confirmed; ready for implementation
 **Date:** 2026-09-07
 **Scope:** Authenticated desktop Dashboard only
 
@@ -55,9 +55,9 @@ Each configured source provides:
 | Name | Identifies the content source. |
 | Type | Distinguishes local folders, Feishu documents, and Feishu wikis. |
 | Change count | Shows the number of pending reviewable content changes. |
-| Latest successful check | Provides freshness without exposing a full scan log. |
-| Status | Communicates `Needs review`, `No changes`, or `Status unknown`. |
-| Action | Opens the source-filtered Changes page, or Sources for an unknown state. |
+| Latest successful check | Provides freshness for checks completed in the current Dashboard session without exposing a full scan log. |
+| State | Communicates `Needs review`, `No changes`, or `Status unknown` once per row. |
+| Route | Opens the source-filtered Changes page, or Sources for an unknown state. |
 
 ### Aggregate Signal
 
@@ -87,8 +87,8 @@ Authenticated application shell
 `-- Workbench
     `-- Dashboard
         |-- Page header: Dashboard + Check all
-        |-- Aggregate change signal
-        |-- Operational facts
+        |-- Aggregate change signal and source-status composition
+        |-- Compact check facts
         `-- Source status list
             |-- Source with changes -> Changes, filtered to source
             |-- Source with no changes -> Changes, filtered to source
@@ -105,28 +105,23 @@ remain unchanged.
 +--------------------+-------------------------------------------------------+
 | easyBlog           | Dashboard                            [Check all]      |
 |                    |-------------------------------------------------------|
-| [*] Dashboard      | +---------------------------------------------------+ |
-| [ ] History        | |  3 sources have changes to review                 | |
-| [ ] Sources        | |  12 content changes from the latest check         | |
-|                    | |                                  [View changes]   | |
-|                    | +---------------------------------------------------+ |
+| [*] Dashboard      |  3 sources have changes to review     [View changes] |
+| [ ] History        |  12 pending changes · 5 / 6 checked · Today 10:42   |
+| [ ] Sources        |  [========== review ==== clear ====== unknown ===]  |
 |                    |                                                       |
-|                    | Sources checked       Pending changes    Last check  |
-|                    | 6 / 6                 12                 Today 10:42 |
+|                    | Sources                                               |
 |                    |-------------------------------------------------------|
-|                    | Source              Changes  Status         Action   |
+|                    | [!] Product Notes                    7 changes     -> |
+|                    |     Local folder · Needs review                        |
 |                    |-------------------------------------------------------|
-|                    | Product Notes       7        Needs review   Open     |
-|                    | Local folder                                               |
+|                    | [!] Engineering Wiki                 5 changes     -> |
+|                    |     Feishu Wiki · Needs review                         |
 |                    |-------------------------------------------------------|
-|                    | Engineering Wiki    5        Needs review   Open     |
-|                    | Feishu Wiki                                                |
+|                    | [✓] Release Notes                  No changes      -> |
+|                    |     Feishu Document                                  |
 |                    |-------------------------------------------------------|
-|                    | Archive             0        No changes     Open     |
-|                    | Local folder                                               |
-|                    |-------------------------------------------------------|
-|                    | Team Handbook       --       Status unknown Sources  |
-|                    | Feishu Document                                            |
+|                    | [×] Team Handbook              Status unknown      -> |
+|                    |     Feishu Document                                  |
 +--------------------+-------------------------------------------------------+
 ```
 
@@ -134,17 +129,24 @@ remain unchanged.
 
 - Keep the existing desktop workbench composition: neutral canvas, white
   workbench, fine borders, compact spacing, and no stacked floating cards.
-- The aggregate signal is one restrained bordered callout, not a marketing
-  hero. A left semantic status border distinguishes it from normal content.
-- Operational facts use a three-column, bordered row. They are supporting
-  context, not clickable metrics.
-- The source overview is a table-like list with stable columns. Long source
-  names wrap or truncate safely without moving status or action positions.
+- The aggregate signal is a restrained, unframed header region, not a
+  marketing hero or a stack of floating cards.
+- Directly below the signal, a compact inline facts sentence reports pending
+  changes, checked-source coverage, and the freshest successful in-session
+  check. These facts are supporting context, not clickable metrics.
+- A segmented status-composition bar visualizes the share of active sources
+  in three discrete states: green for no changes, amber for changes needing
+  review, and red for unknown or failed. It is not a review-completion meter.
+- The source overview is a table-like list with stable routing placement.
+  Long source names wrap or truncate safely without moving the right arrow.
 - Sources needing review sort first, followed by sources with an unknown
   status, then sources with no changes. The source count in the signal remains
   the source of truth for aggregate work.
+- Each source presents its state once: a semantic icon beside the name and a
+  visible state label in its metadata where needed. Do not add a redundant
+  `Status` column or duplicate icon-and-label pair.
 - Use text plus semantic color for state. Color alone must not distinguish
-  ready, clear, or unknown states.
+  reviewable, clear, or unknown sources.
 
 ## Interaction Rules
 
@@ -152,9 +154,9 @@ remain unchanged.
 | --- | --- |
 | `Check all` | Starts a scan across all configured sources. Disable only once the request begins; retain the current source list while checking. |
 | Aggregate `View changes` | Opens `Changes` with all reviewable pending changes in scope. |
-| `Open` for a reviewable source | Opens `Changes` with that source as the active filter. |
-| `Open` for a no-change source | Opens `Changes` with the source as the active filter; the resulting empty state retains the scan context. |
-| `Sources` for an unknown source | Opens the corresponding source in `Sources`; Dashboard does not provide error recovery. |
+| Right arrow for a reviewable source | Opens `Changes` with that source as the active filter. |
+| Right arrow for a no-change source | Opens `Changes` with the source as the active filter; the resulting empty state retains the scan context. |
+| Right arrow for an unknown source | Opens the corresponding source in `Sources`; Dashboard does not provide error recovery. |
 | Sidebar navigation | Retains the app-shell behavior already established by the current implementation. |
 
 ## States
@@ -176,8 +178,8 @@ The visual design must meet these criteria at implementation time:
 
 - Render the source overview with semantic table or list markup appropriate to
   the final responsive behavior; do not create clickable `div` rows.
-- Use labeled buttons for `Check all`, `View changes`, and source routing.
-  Icon-only shell controls retain accessible names and tooltips.
+- Use labeled buttons for `Check all` and `View changes`. The icon-only source
+  arrow has a source-specific accessible name and a tooltip.
 - Announce scan lifecycle updates through a polite live region.
 - Preserve visible `:focus-visible` treatment and ensure sticky or fixed
   controls cannot cover a focused item.
@@ -203,15 +205,15 @@ Dashboard markup and styles exist.
   widgets.
 - Full diagnostics and recovery workflows.
 
-## Next Visual Design Decisions
+## Implementation Notes
 
-The wireframe is confirmed. The following decisions are intentionally open for
-the visual design pass:
-
-1. Signal callout treatment: neutral, blue-gray informational, or semantic
-   amber when review is pending.
-2. Status language and badge treatment for reviewable, clear, and unknown
-   sources.
-3. Density: row heights, whitespace, and the exact compact-table rhythm.
-4. Icon usage for source types and source-row actions.
-5. Empty, checking, no-change, and partial-failure visual states.
+- Use GitHub-style status semantics: green check for no changes, amber dot for
+  reviewable changes, and red x for unknown status.
+- Use `ArrowRight` as the source-row route affordance. Its accessible name
+  names the destination source and its tooltip explains the route.
+- The backend does not persist an all-source Dashboard scan timestamp. The
+  UI may show successful check freshness only for scans completed during the
+  current Dashboard session; otherwise it says that the source was not checked
+  in this session.
+- Empty, checking, no-change, and partial-failure states follow the state
+  model above and preserve source rows whenever previously known data exists.
