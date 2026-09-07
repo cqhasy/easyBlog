@@ -109,21 +109,6 @@ function formatCheckedAt(value?: string): string {
   }).format(date);
 }
 
-function renderStatusSegments(rows: DashboardRow[]): string {
-  const counts = {
-    needs_review: rows.filter((row) => row.state === "needs_review").length,
-    no_changes: rows.filter((row) => row.state === "no_changes").length,
-    unknown: rows.filter((row) => row.state === "unknown").length,
-  };
-  const labels: Record<DashboardRowState, string> = {
-    needs_review: "需要评审",
-    no_changes: "无变更",
-    unknown: "状态未知",
-  };
-
-  return `<div class="dashboard-status-bar" role="img" aria-label="${Object.entries(counts).map(([state, count]) => `${count} 个${labels[state as DashboardRowState]}`).join("，")}">${(Object.entries(counts) as Array<[DashboardRowState, number]>).filter(([, count]) => count > 0).map(([state, count]) => `<span class="dashboard-status-segment dashboard-status-${state}" style="flex-grow:${count}" aria-hidden="true"></span>`).join("")}</div>`;
-}
-
 function renderSourceRow(row: DashboardRow): string {
   const name = escapeHtml(row.scope.scope.name);
   const stateLabel = statusLabel(row.state);
@@ -168,7 +153,7 @@ function renderReadyDashboard(rows: DashboardRow[], scanning: boolean): string {
     ? '<p class="dashboard-operation" role="status" aria-live="polite">正在检查所有来源...</p>'
     : "";
 
-  return `<header class="dashboard-header"><div><h1 id="dashboard-title">Dashboard</h1><p>集中查看来源状态与待评审内容。</p></div><button type="button" data-action="check-all" ${scanning ? "disabled" : ""}>${scanning ? "正在检查..." : "检查全部"}</button></header><section class="dashboard-overview" aria-labelledby="dashboard-signal-title"><div class="dashboard-signal"><p class="dashboard-kicker">当前状态</p><h2 id="dashboard-signal-title">${signal}</h2>${operation}</div>${renderSummaryRing(rows, pendingChanges, latestCheck)}</section>${renderStatusSegments(rows)}<section class="dashboard-sources" aria-labelledby="dashboard-sources-title"><header><div><h2 id="dashboard-sources-title">来源</h2><p>按待处理优先级排列</p></div><span>${rows.length} 个已启用</span></header><ul>${rows.map(renderSourceRow).join("")}</ul></section>`;
+  return `<header class="dashboard-header"><div><h1 id="dashboard-title">Dashboard</h1><p>集中查看来源状态与待评审内容。</p></div><button type="button" data-action="check-all" ${scanning ? "disabled" : ""}>${scanning ? "正在检查..." : "检查全部"}</button></header><section class="dashboard-overview" aria-labelledby="dashboard-signal-title"><div class="dashboard-signal"><p class="dashboard-kicker">当前状态</p><h2 id="dashboard-signal-title">${signal}</h2>${operation}</div>${renderSummaryRing(rows, pendingChanges, latestCheck)}</section><section class="dashboard-sources" aria-labelledby="dashboard-sources-title"><header><div><h2 id="dashboard-sources-title">来源</h2><p>按待处理优先级排列</p></div><span>${rows.length} 个已启用</span></header><ul>${rows.map(renderSourceRow).join("")}</ul></section>`;
 }
 
 export function renderDashboard(

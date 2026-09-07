@@ -73,7 +73,7 @@ describe("dashboard", () => {
       ],
     });
 
-    expect(html).toContain('class="dashboard-status-bar"');
+    expect(html).toContain('class="dashboard-overview"');
     expect(html).toContain('data-dashboard-status="needs_review"');
     expect(html).toContain('data-dashboard-status="no_changes"');
     expect(html).toContain('data-dashboard-status="unknown"');
