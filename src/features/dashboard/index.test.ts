@@ -80,7 +80,11 @@ describe("dashboard", () => {
     expect(html).toContain('aria-label="打开 Product Notes 的变更"');
     expect(html).toContain("本地文件夹 · 本会话尚未检查");
     expect(html).toContain(">3 项变更<");
-    expect(html).toContain(">—<");
+    expect(html).toContain('class="dashboard-summary-ring"');
+    expect(html).toContain('aria-label="3 项待评审变更，2 / 3 个来源已检查，最近成功检查：本会话尚未检查"');
+    expect(html).not.toContain("内容概览");
+    expect(html).not.toContain('data-action="open-changes"');
+    expect(html).not.toContain(">—<");
     expect(html).not.toContain("· 需要评审 ·");
     expect(html).not.toContain("· 无变更 ·");
     expect(html).not.toContain(">无变更<");
@@ -271,5 +275,36 @@ describe("dashboard", () => {
       minute: "2-digit",
       hour12: false,
     }).format(new Date("2026-09-07T10:42:00Z")));
+  });
+
+  it("keeps completed scan times when Dashboard is mounted again", async () => {
+    const checkedAtByScope = new Map<ScopeId, string>();
+    const firstRoot = new DashboardDomRoot();
+    const secondRoot = new DashboardDomRoot();
+    const { mountDashboard } = dashboard;
+    const api = {
+      listScopes: async () => [reviewScope],
+      listChanges: async () => [],
+      scanScope: async () => ({ changes: [], scanned_at: "2026-09-07T10:42:00Z" }),
+    };
+    const navigation = { openChanges: () => undefined, openSources: () => undefined };
+    const formattedTime = new Intl.DateTimeFormat("zh-CN", {
+      month: "numeric",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    }).format(new Date("2026-09-07T10:42:00Z"));
+
+    mountDashboard(firstRoot as unknown as HTMLElement, api, navigation, undefined, checkedAtByScope);
+    await flushDomUpdates();
+    firstRoot.clickAction("check-all");
+    await flushDomUpdates();
+    await flushDomUpdates();
+
+    mountDashboard(secondRoot as unknown as HTMLElement, api, navigation, undefined, checkedAtByScope);
+    await flushDomUpdates();
+
+    expect(secondRoot.innerHTML).toContain(formattedTime);
   });
 });

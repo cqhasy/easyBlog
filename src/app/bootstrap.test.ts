@@ -169,7 +169,7 @@ describe("application bootstrap", () => {
       blocked_reason: null,
       snapshot: null,
     }]);
-    dashboardBridge.scanScope.mockResolvedValue({ changes: [], scanned_at: "now" });
+    dashboardBridge.scanScope.mockResolvedValue({ changes: [], scanned_at: "2026-09-07T10:42:00Z" });
     const root = new AppDomRoot();
     const controller = createAppController(root as unknown as HTMLElement, {
       githubAuthorizationStatus: async () => ({ state: "ready", login: "octocat" }),
@@ -178,12 +178,27 @@ describe("application bootstrap", () => {
 
     await controller.start();
     await flushDomUpdates();
+    root.workbench.clickAction("check-all");
+    await flushDomUpdates();
+    await flushDomUpdates();
     root.workbench.clickAction("open-source", undefined, "scope-1");
     await flushDomUpdates();
 
     expect(root.innerHTML).toContain('data-page="dashboard" aria-current="page"');
     expect(root.workbenchHTML).toContain('id="changes-title"');
     expect(root.workbenchHTML).toContain("待发布变更");
+
+    root.workbench.clickAction("back-to-dashboard");
+    await flushDomUpdates();
+
+    expect(root.workbenchHTML).toContain('id="dashboard-title"');
+    expect(root.workbenchHTML).toContain(new Intl.DateTimeFormat("zh-CN", {
+      month: "numeric",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    }).format(new Date("2026-09-07T10:42:00Z")));
   });
 
   it("shows Welcome while authorization is required and never mounts the app shell", async () => {

@@ -17,6 +17,7 @@ import {
   resolveSidebarMode,
   type ShellPage,
 } from "./view-state";
+import type { ScopeId } from "../contracts";
 import "../styles.css";
 
 export type AppDependencies = {
@@ -76,6 +77,7 @@ export function createAppController(
   let activeLoginGeneration: number | undefined;
   let sourcesResourceId: string | undefined;
   let pageGeneration = 0;
+  const dashboardCheckedAtByScope = new Map<ScopeId, string>();
   let browserAuthorizationPoll: ReturnType<typeof setInterval> | undefined;
   let browserAuthorizationCheckInFlight = false;
   const checkGithubLoginStatus = dependencies.githubLoginStatus ?? (async (): Promise<GithubLoginProgress> => {
@@ -105,7 +107,7 @@ export function createAppController(
           viewState.navigate({ page: "sources" });
           render();
         },
-      }, hydrateIcons);
+      }, hydrateIcons, dashboardCheckedAtByScope);
       return;
     }
     if (view.page === "changes") {
@@ -116,7 +118,12 @@ export function createAppController(
           viewState.navigate({ page: "sources" });
           render();
         },
-      }, { scopeId: view.scopeId });
+        backToDashboard: () => {
+          if (!isCurrentPage()) return;
+          viewState.navigate({ page: "dashboard" });
+          render();
+        },
+      }, { scopeId: view.scopeId }, hydrateIcons);
       return;
     }
     if (view.page === "history") {
