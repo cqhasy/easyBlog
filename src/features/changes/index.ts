@@ -167,7 +167,17 @@ function renderTreeCheckbox(ids: string[], state: "checked" | "mixed" | "uncheck
   const disabled = ids.length ? "" : "disabled";
   const checked = state === "checked" ? "checked" : "";
   const mixed = state === "mixed" ? 'data-indeterminate="true"' : "";
-  return `<label class="change-select change-tree-select"><input type="checkbox" data-action="toggle-tree-selection" data-change-ids="${escapeHtml(ids.join(","))}" ${checked} ${disabled} ${mixed} aria-label="选择 ${escapeHtml(label)} 中的文件" /><span class="visually-hidden">选择 ${escapeHtml(label)} 中的文件</span></label>`;
+  return `<label class="change-select change-tree-select"><input type="checkbox" data-action="toggle-tree-selection" data-change-ids="${escapeHtml(JSON.stringify(ids))}" ${checked} ${disabled} ${mixed} aria-label="选择 ${escapeHtml(label)} 中的文件" /><span class="visually-hidden">选择 ${escapeHtml(label)} 中的文件</span></label>`;
+}
+
+function treeSelectionIds(value: string | undefined): string[] {
+  if (!value) return [];
+  try {
+    const ids: unknown = JSON.parse(value);
+    return Array.isArray(ids) && ids.every((id) => typeof id === "string") ? ids : [];
+  } catch {
+    return [];
+  }
 }
 
 function renderChangeTree(nodes: ChangeTreeNode[], selected: Set<string>, collapsed: Set<string>, depth = 0): string {
@@ -333,7 +343,7 @@ export function mountChanges(
     const input = event.target;
     if (input instanceof HTMLSelectElement && input.dataset.action === "change-scope") { void refresh(input.value); return; }
     if (input instanceof HTMLInputElement && input.dataset.action === "toggle-tree-selection" && state.status === "ready") {
-      const ids = input.dataset.changeIds?.split(",").filter(Boolean) ?? [];
+      const ids = treeSelectionIds(input.dataset.changeIds);
       for (const id of ids) {
         if (input.checked) selected.add(id); else selected.delete(id);
       }

@@ -15,10 +15,14 @@ function change(kind: Change["kind"], id: string = kind): Change {
 class ChangesDomRoot {
   innerHTML = "";
   private clickHandler: ((event: MouseEvent) => void) | undefined;
+  private changeHandler: ((event: Event) => void) | undefined;
 
   addEventListener(type: string, listener: EventListenerOrEventListenerObject): void {
     if (type === "click" && typeof listener === "function") {
       this.clickHandler = listener as (event: MouseEvent) => void;
+    }
+    if (type === "change" && typeof listener === "function") {
+      this.changeHandler = listener as (event: Event) => void;
     }
   }
 
@@ -30,6 +34,12 @@ class ChangesDomRoot {
           selector === "[data-action]" ? { dataset: { action } } as unknown as T : null,
       },
     } as unknown as MouseEvent);
+  }
+
+  changeTreeSelection(input: HTMLInputElement): void {
+    this.changeHandler?.({
+      target: input,
+    } as unknown as Event);
   }
 }
 
@@ -156,6 +166,42 @@ describe("changes workspace", () => {
     await flushDomUpdates();
 
     expect(onRendered).toHaveBeenCalled();
+  });
+
+  it("selects and clears a folder containing a comma-bearing change ID", async () => {
+    class TestSelectElement { dataset: DOMStringMap = {} as DOMStringMap; }
+    class TestInputElement { dataset: DOMStringMap = {} as DOMStringMap; checked = false; }
+    vi.stubGlobal("HTMLSelectElement", TestSelectElement);
+    vi.stubGlobal("HTMLInputElement", TestInputElement);
+    const root = new ChangesDomRoot();
+    const commaId = "source:docs/a,b.md";
+    const reviewContexts: Array<{ selectedChangeIds: string[] }> = [];
+
+    mountChanges(root as unknown as HTMLElement, {
+      listScopes: async () => [scope],
+      listChanges: async () => [{ ...change("added", commaId), source_path: "docs/a,b.md" }],
+      scanScope: async () => ({ changes: [], scanned_at: "now" }),
+    }, {
+      openReview: (context) => { reviewContexts.push(context); },
+      openSources: () => undefined,
+      backToDashboard: () => undefined,
+    });
+
+    await flushDomUpdates();
+    const folderInput = new TestInputElement();
+    folderInput.dataset = { action: "toggle-tree-selection", changeIds: JSON.stringify([commaId]) } as DOMStringMap;
+    folderInput.checked = true;
+    root.changeTreeSelection(folderInput as unknown as HTMLInputElement);
+    root.clickAction("open-review");
+
+    expect(reviewContexts).toEqual([expect.objectContaining({ selectedChangeIds: [commaId] })]);
+
+    folderInput.checked = false;
+    root.changeTreeSelection(folderInput as unknown as HTMLInputElement);
+    root.clickAction("open-review");
+
+    expect(reviewContexts).toHaveLength(1);
+    vi.unstubAllGlobals();
   });
 
   it("opens review in the explicit selected order rather than backend list order", async () => {
