@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { createChangesRefreshController, defaultSelectedChanges, groupChanges, loadChanges, mountChanges, reconcileSelectedChangeIds, renderChanges, selectableChanges } from "./index";
+import { buildChangeTree, changeTreeSelectionState, createChangesRefreshController, defaultSelectedChanges, groupChanges, loadChanges, mountChanges, reconcileSelectedChangeIds, renderChanges, selectableChanges } from "./index";
 import type { Change, ScopeSummary } from "../../contracts";
 
 const scope: ScopeSummary = {
@@ -38,6 +38,33 @@ async function flushDomUpdates(): Promise<void> {
 }
 
 describe("changes workspace", () => {
+  it("builds a nested tree from normalized source paths with folders before files", () => {
+    const nested = { ...change("updated", "guide"), source_path: "docs\\guides\\git.md" };
+    const rootFile = { ...change("added", "readme"), source_path: "README.md" };
+    const docsFile = { ...change("deleted", "release"), source_path: "docs/release.md" };
+
+    expect(buildChangeTree([nested, rootFile, docsFile])).toEqual([
+      {
+        type: "folder",
+        id: "folder:docs",
+        name: "docs",
+        children: [
+          { type: "folder", id: "folder:docs/guides", name: "guides", children: [{ type: "file", change: nested }] },
+          { type: "file", change: docsFile },
+        ],
+      },
+      { type: "file", change: rootFile },
+    ]);
+  });
+
+  it("reports checked and mixed folder selections from selectable descendant files", () => {
+    const tree = buildChangeTree([change("added", "a"), change("deleted", "b"), change("blocked", "c")]);
+
+    expect(changeTreeSelectionState(tree, new Set(["a"]))).toBe("mixed");
+    expect(changeTreeSelectionState(tree, new Set(["a", "b"]))).toBe("checked");
+    expect(changeTreeSelectionState(tree, new Set())).toBe("unchecked");
+  });
+
   it("groups changes in review order while keeping deletions manual by default", () => {
     const changes = [change("deleted"), change("added"), change("blocked"), change("updated")];
     expect(groupChanges(changes).map((group) => group.kind)).toEqual(["blocked", "added", "updated", "deleted"]);
@@ -70,6 +97,16 @@ describe("changes workspace", () => {
     expect(html).toContain("进入评审</button>");
     expect(html).toContain('data-action="open-review"');
     expect(html).not.toContain('data-action="preview"');
+  });
+
+  it("uses the file name as the primary label and keeps a Markdown title secondary", () => {
+    const guide = { ...change("updated", "git-guide"), source_path: "docs/git-basics.md", title: "（1）git的初始操作与基础用法" };
+
+    const html = renderChanges({ status: "ready", scope, changes: [guide], scannedAt: "2026-09-02T00:00:00Z" }, new Set([guide.id]));
+
+    expect(html).toContain("<strong>git-basics</strong>");
+    expect(html).not.toContain("<strong>git-basics.md</strong>");
+    expect(html).toContain('class="change-article-title">（1）git的初始操作与基础用法</span>');
   });
 
   it("reports an in-progress scan in the changes control region", () => {
