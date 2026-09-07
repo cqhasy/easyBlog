@@ -1,7 +1,10 @@
 import { githubAuthorizationStatus, githubLoginStatus, startGithubLogin } from "../bridge/targets";
+import { listChanges, scanScope } from "../bridge/changes";
+import { listScopes } from "../bridge/sources";
 import type { GithubAuthorization, GithubLoginProgress } from "../contracts";
 import { renderAccount } from "../features/account";
-import { renderDashboard } from "../features/dashboard";
+import { mountDashboard } from "../features/dashboard";
+import { mountChanges } from "../features/changes";
 import { mountHistory } from "../features/history";
 import { renderSettings } from "../features/settings";
 import { mountSources } from "../features/sources";
@@ -87,7 +90,33 @@ export function createAppController(
     const currentPageGeneration = ++pageGeneration;
     const isCurrentPage = () => currentPageGeneration === pageGeneration;
     if (view.page === "dashboard") {
-      content.innerHTML = renderDashboard();
+      mountDashboard(content, {
+        listScopes,
+        listChanges,
+        scanScope,
+      }, {
+        openChanges: (scopeId) => {
+          if (!isCurrentPage()) return;
+          viewState.navigate({ page: "changes", scopeId });
+          render();
+        },
+        openSources: () => {
+          if (!isCurrentPage()) return;
+          viewState.navigate({ page: "sources" });
+          render();
+        },
+      }, hydrateIcons);
+      return;
+    }
+    if (view.page === "changes") {
+      mountChanges(content, undefined, {
+        openReview: () => undefined,
+        openSources: () => {
+          if (!isCurrentPage()) return;
+          viewState.navigate({ page: "sources" });
+          render();
+        },
+      }, { scopeId: view.scopeId });
       return;
     }
     if (view.page === "history") {
