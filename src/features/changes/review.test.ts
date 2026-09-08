@@ -174,6 +174,25 @@ describe("focused change review", () => {
     expect(discarded).toEqual(["batch-loading-target"]);
   });
 
+  it("discards a preview when loading the target list fails", async () => {
+    const root = new ReviewDomRoot();
+    const discarded: string[] = [];
+    mountChangeReview(root as unknown as HTMLElement, {
+      listScopes: async () => [scope],
+      listChanges: async () => [change("added", "a")],
+      listTargets: async () => { throw new Error("目标列表不可用"); },
+      previewRelease: async () => plan("batch-targets-failed"),
+      discardReleasePreview: async ({ batch_id }) => { discarded.push(batch_id); return true; },
+    }, { scopeId: scope.scope.id, selectedChangeIds: ["a"], activeChangeId: "a" }, { backToChanges: () => undefined, openSources: () => undefined });
+
+    await flushDomUpdates();
+    root.clickAction("preview-release");
+    await flushDomUpdates();
+    await flushDomUpdates();
+
+    expect(discarded).toEqual(["batch-targets-failed"]);
+  });
+
   it("discards a preview when publication fails before it starts", async () => {
     const root = new ReviewDomRoot();
     const discarded: string[] = [];

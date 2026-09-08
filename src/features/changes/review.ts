@@ -235,7 +235,13 @@ export function mountChangeReview(root: HTMLElement, api: ReviewApi = { listScop
     state = { status: "previewing", scope: reviewScope, selectedChanges: reviewChanges, activeChangeId: previous?.activeChangeId ?? reviewChanges[0].id, viewedChangeIds: previous ? viewedIds(previous) : [] }; render();
     void api.previewRelease({ scope_id: reviewScope.scope.id, change_ids: reviewChanges.map((change) => change.id) }).then(async (plan) => {
       previewBatchId = plan.batch.id;
-      const targets = await (api.listTargets?.() ?? Promise.resolve([]));
+      let targets: ConnectedTarget[];
+      try {
+        targets = await (api.listTargets?.() ?? Promise.resolve([]));
+      } catch (error) {
+        discardPreview(plan.batch.id);
+        throw error;
+      }
       if (current !== generation || disposed) { discardPreview(plan.batch.id); return; }
       const target = targets.find((item) => item.id === plan.batch.target_id);
       if (!target) discardPreview(plan.batch.id);

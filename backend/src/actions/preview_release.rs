@@ -1,6 +1,6 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
-    path::Path,
+    path::{Path, PathBuf},
 };
 
 use chrono::{SecondsFormat, Utc};
@@ -126,7 +126,14 @@ fn load_active_plan(
     }
     append_frozen_deletes(&mut files, &operations)?;
     validate_frozen_operations(checkout.root(), &files, &operations)?;
-
+    let binding_change_ids = active_binding_change_ids(ledger, target, &selected)?;
+    let diff_change_ids = build_diff_change_ids(
+        &source.path,
+        target,
+        &selected,
+        &operations,
+        &binding_change_ids,
+    )?;
     let mut plan = ReleasePlan::new(
         active.id.clone(),
         ReleaseBatch {
@@ -139,7 +146,7 @@ fn load_active_plan(
         &files,
         checkout.root(),
     )?;
-    assign_diff_change_ids(&mut plan, &source.path, target, &selected)?;
+    apply_diff_change_ids(&mut plan, &diff_change_ids);
     Ok(plan)
 }
 
@@ -234,7 +241,16 @@ pub fn execute(
                     &files,
                     checkout.root(),
                 )?;
-                assign_diff_change_ids(&mut plan, &source.path, &input.target, &selected)?;
+                let binding_change_ids =
+                    active_binding_change_ids(ledger, &input.target, &selected)?;
+                let diff_change_ids = build_diff_change_ids(
+                    &source.path,
+                    &input.target,
+                    &selected,
+                    &operations,
+                    &binding_change_ids,
+                )?;
+                apply_diff_change_ids(&mut plan, &diff_change_ids);
                 return Ok(plan);
             }
         }
@@ -243,15 +259,31 @@ pub fn execute(
             "An existing release preview must be confirmed before creating another one",
         ));
     }
-    let (bindings, revisions, operations, binding_transitions) = preview_ledger_records(
-        ledger,
+    let (bindings, revisions, operations, binding_transitions, binding_change_ids) =
+        preview_ledger_records(
+            ledger,
+            &source.path,
+            &input.target,
+            &selected,
+            checkout.root(),
+            &head,
+        )?;
+    append_frozen_deletes(&mut files, &operations)?;
+    let diff_change_ids = build_diff_change_ids(
         &source.path,
         &input.target,
         &selected,
-        checkout.root(),
-        &head,
+        &operations,
+        &binding_change_ids,
     )?;
-    append_frozen_deletes(&mut files, &operations)?;
+    let mut plan = ReleasePlan::new(
+        batch.id.clone(),
+        batch.clone(),
+        false,
+        &files,
+        checkout.root(),
+    )?;
+    apply_diff_change_ids(&mut plan, &diff_change_ids);
     let source_transitions = selected
         .iter()
         .map(|change| SourceTransition {
@@ -294,26 +326,69 @@ pub fn execute(
                 "The target changed or already has a release preview",
             )
         })?;
-    let mut plan = ReleasePlan::new(batch.id.clone(), batch, false, &files, checkout.root())?;
-    assign_diff_change_ids(&mut plan, &source.path, &input.target, &selected)?;
     Ok(plan)
 }
 
-fn assign_diff_change_ids(
-    plan: &mut ReleasePlan,
+fn build_diff_change_ids(
     source_root: &str,
     target: &Target,
     changes: &[Change],
-) -> AppResult<()> {
-    for change in changes {
+    operations: &[LedgerOperation],
+    binding_change_ids: &BTreeMap<String, String>,
+) -> AppResult<BTreeMap<PathBuf, String>> {
+    let mut diff_change_ids = BTreeMap::new();
+    for change in changes
+        .iter()
+        .filter(|change| !matches!(change.kind, ChangeKind::Deleted))
+    {
         let files = build_file_set(source_root, target, std::slice::from_ref(change))?;
         for file in files.files() {
-            for diff in plan.diffs.iter_mut().filter(|diff| diff.path == file.path) {
-                diff.change_id = Some(change.id.clone());
-            }
+            diff_change_ids.insert(file.path.clone(), change.id.clone());
         }
     }
-    Ok(())
+    for operation in operations
+        .iter()
+        .filter(|operation| operation.operation.after_hash.is_none())
+    {
+        let change_id = binding_change_ids
+            .get(&operation.binding_id)
+            .ok_or_else(|| {
+                AppError::new(
+                    "release_preview_invalidated",
+                    "The stored release preview has an unowned deletion",
+                )
+            })?
+            .clone();
+        diff_change_ids.insert(operation.operation.target_path.clone(), change_id);
+    }
+    Ok(diff_change_ids)
+}
+
+fn apply_diff_change_ids(plan: &mut ReleasePlan, diff_change_ids: &BTreeMap<PathBuf, String>) {
+    for diff in &mut plan.diffs {
+        diff.change_id = diff_change_ids.get(&diff.path).cloned();
+    }
+}
+
+fn active_binding_change_ids(
+    ledger: &LedgerRepository,
+    target: &Target,
+    changes: &[Change],
+) -> AppResult<BTreeMap<String, String>> {
+    let mut binding_change_ids = BTreeMap::new();
+    for change in changes {
+        let binding = ledger
+            .binding_for_source(&target.id, &change.source_identity)
+            .map_err(|_| AppError::new("storage_error", "Article binding could not be loaded"))?
+            .ok_or_else(|| {
+                AppError::new(
+                    "release_preview_invalidated",
+                    "The stored release preview has a missing article binding",
+                )
+            })?;
+        binding_change_ids.insert(binding.id, change.id.clone());
+    }
+    Ok(binding_change_ids)
 }
 
 pub(crate) fn append_frozen_deletes(
@@ -350,12 +425,14 @@ fn preview_ledger_records(
     Vec<BindingRevision>,
     Vec<LedgerOperation>,
     Vec<BindingTransition>,
+    BTreeMap<String, String>,
 )> {
     let objects = GitObjectStore::new(root, head);
     let mut bindings = Vec::new();
     let mut revisions = Vec::new();
     let mut operations = Vec::new();
     let mut transitions = Vec::new();
+    let mut binding_change_ids = BTreeMap::new();
     for change in selected {
         let binding = ledger
             .binding_for_source(&target.id, &change.source_identity)
@@ -368,6 +445,7 @@ fn preview_ledger_records(
                 state: BindingState::Active,
                 current_revision: None,
             });
+        binding_change_ids.insert(binding.id.clone(), change.id.clone());
         if matches!(change.kind, ChangeKind::Deleted) && binding.current_revision.is_none() {
             return Err(AppError::new(
                 "deleted_change_unpublished",
@@ -542,7 +620,13 @@ fn preview_ledger_records(
             bindings.push(binding);
         }
     }
-    Ok((bindings, revisions, operations, transitions))
+    Ok((
+        bindings,
+        revisions,
+        operations,
+        transitions,
+        binding_change_ids,
+    ))
 }
 
 fn output_kind(path: &Path) -> BindingOutputKind {
@@ -1160,6 +1244,84 @@ mod tests {
 
         assert_eq!(error.code, "deleted_change_unpublished");
         drop(ledger);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn attributes_frozen_resource_deletions_to_the_selected_change() {
+        let root = std::env::temp_dir().join(format!(
+            "easyblog-preview-attribution-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let source_root = root.join("source");
+        let target_root = root.join("target");
+        fs::create_dir_all(&source_root).unwrap();
+        fs::create_dir_all(target_root.join("assets/easyblog/deleted")).unwrap();
+        fs::write(
+            target_root.join("assets/easyblog/deleted/cover.png"),
+            "old cover",
+        )
+        .unwrap();
+        let target = Target {
+            state: TargetState::Ready,
+            adapter: Some(crate::targets::PublishingAdapter::GithubPages),
+            ..Target::new("target", &target_root)
+        };
+        let mut files = FileSet::default();
+        files
+            .insert(PlannedFile {
+                path: "assets/easyblog/deleted/cover.png".into(),
+                contents: PlannedFileContents::Delete,
+            })
+            .unwrap();
+        let mut plan = ReleasePlan::new(
+            "preview",
+            ReleaseBatch {
+                id: "batch".into(),
+                scope_id: "scope".into(),
+                target_id: "target".into(),
+                change_ids: vec!["deleted-change".into()],
+            },
+            false,
+            &files,
+            &target_root,
+        )
+        .unwrap();
+        let change = Change {
+            id: "deleted-change".into(),
+            scope_id: "scope".into(),
+            kind: ChangeKind::Deleted,
+            source_identity: "deleted.md".into(),
+            source_path: "deleted.md".into(),
+            previous_path: None,
+            title: Some("Deleted".into()),
+            selected: true,
+            blocked_reason: None,
+            snapshot: None,
+        };
+
+        let operations = vec![LedgerOperation {
+            id: "operation".into(),
+            binding_id: "binding".into(),
+            ordinal: 0,
+            operation: ReleaseOperation::delete(
+                "assets/easyblog/deleted/cover.png",
+                Some(ContentHash::from_bytes(b"old cover")),
+                Some("blob".into()),
+            )
+            .unwrap(),
+        }];
+        let diff_change_ids = build_diff_change_ids(
+            source_root.to_str().unwrap(),
+            &target,
+            &[change],
+            &operations,
+            &BTreeMap::from([("binding".into(), "deleted-change".into())]),
+        )
+        .unwrap();
+        apply_diff_change_ids(&mut plan, &diff_change_ids);
+
+        assert_eq!(plan.diffs[0].change_id.as_deref(), Some("deleted-change"));
         fs::remove_dir_all(root).unwrap();
     }
 }
