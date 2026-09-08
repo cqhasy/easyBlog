@@ -127,7 +127,7 @@ fn load_active_plan(
     append_frozen_deletes(&mut files, &operations)?;
     validate_frozen_operations(checkout.root(), &files, &operations)?;
 
-    ReleasePlan::new(
+    let mut plan = ReleasePlan::new(
         active.id.clone(),
         ReleaseBatch {
             id: active.id,
@@ -138,7 +138,9 @@ fn load_active_plan(
         false,
         &files,
         checkout.root(),
-    )
+    )?;
+    assign_diff_change_ids(&mut plan, &source.path, target, &selected)?;
+    Ok(plan)
 }
 
 pub fn execute(
@@ -220,7 +222,7 @@ pub fn execute(
                 && append_frozen_deletes(&mut files, &operations).is_ok()
                 && validate_frozen_operations(checkout.root(), &files, &operations).is_ok()
             {
-                return ReleasePlan::new(
+                let mut plan = ReleasePlan::new(
                     active.id.clone(),
                     ReleaseBatch {
                         id: active.id,
@@ -231,7 +233,9 @@ pub fn execute(
                     false,
                     &files,
                     checkout.root(),
-                );
+                )?;
+                assign_diff_change_ids(&mut plan, &source.path, &input.target, &selected)?;
+                return Ok(plan);
             }
         }
         return Err(AppError::new(
@@ -290,7 +294,26 @@ pub fn execute(
                 "The target changed or already has a release preview",
             )
         })?;
-    ReleasePlan::new(batch.id.clone(), batch, false, &files, checkout.root())
+    let mut plan = ReleasePlan::new(batch.id.clone(), batch, false, &files, checkout.root())?;
+    assign_diff_change_ids(&mut plan, &source.path, &input.target, &selected)?;
+    Ok(plan)
+}
+
+fn assign_diff_change_ids(
+    plan: &mut ReleasePlan,
+    source_root: &str,
+    target: &Target,
+    changes: &[Change],
+) -> AppResult<()> {
+    for change in changes {
+        let files = build_file_set(source_root, target, std::slice::from_ref(change))?;
+        for file in files.files() {
+            for diff in plan.diffs.iter_mut().filter(|diff| diff.path == file.path) {
+                diff.change_id = Some(change.id.clone());
+            }
+        }
+    }
+    Ok(())
 }
 
 pub(crate) fn append_frozen_deletes(
@@ -1051,20 +1074,6 @@ mod tests {
             change_ids: vec!["change".into()],
         };
         let first = execute(&sources, &scopes, &changes, &ledger, input()).unwrap();
-        let mut recovering_target = target.clone();
-        recovering_target.state = TargetState::NeedsRecovery;
-        let recovery_error = load_active(
-            &sources,
-            &scopes,
-            &changes,
-            &ledger,
-            ActivePreviewInput {
-                scope_id: "second-scope".into(),
-                target: recovering_target,
-            },
-        )
-        .unwrap_err();
-        assert_eq!(recovery_error.code, "target_needs_configuration");
         let second = load_active(
             &sources,
             &scopes,

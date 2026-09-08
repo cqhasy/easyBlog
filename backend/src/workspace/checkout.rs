@@ -99,7 +99,14 @@ fn truncate_detail(detail: &str) -> &str {
     if detail.len() <= MAX_DETAIL_LENGTH {
         detail
     } else {
-        &detail[..MAX_DETAIL_LENGTH]
+        let end = detail
+            .char_indices()
+            .take_while(|(index, _)| *index <= MAX_DETAIL_LENGTH)
+            .map(|(index, character)| index + character.len_utf8())
+            .take_while(|index| *index <= MAX_DETAIL_LENGTH)
+            .last()
+            .unwrap_or_default();
+        &detail[..end]
     }
 }
 

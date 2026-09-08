@@ -30,6 +30,7 @@ const publication: PublicationRecord = {
   published_at: "2026-09-04T07:00:00Z",
   rollback_commit_sha: null,
   rolled_back_at: null,
+  operations: [],
 };
 
 const change = (id: string): Change => ({

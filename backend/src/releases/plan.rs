@@ -33,6 +33,7 @@ impl ReleasePlan {
             .iter()
             .map(|file| match &file.contents {
                 PlannedFileContents::Binary(contents) => Ok(crate::workspace::FileDiff {
+                    change_id: None,
                     path: file.path.clone(),
                     kind: if root.join(&file.path).exists() {
                         crate::workspace::FileChangeKind::Modified

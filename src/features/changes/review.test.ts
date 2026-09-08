@@ -85,33 +85,31 @@ describe("focused change review", () => {
     expect(root.innerHTML).toContain('data-change-id="bravo"');
   });
 
-  it("opens a persisted preview on entry instead of attempting to create another one", async () => {
+  it("discards a stale preview on entry and opens the requested selection", async () => {
     const root = new ReviewDomRoot();
-    let previewRequests = 0;
+    const discarded: string[] = [];
 
     mountChangeReview(root as unknown as HTMLElement, {
       listScopes: async () => [scope],
       listChanges: async () => [change("added", "a"), change("updated", "b")],
       listTargets: async () => [target],
       activeReleasePreview: async () => plan("persisted-batch"),
-      previewRelease: async () => {
-        previewRequests += 1;
-        return plan("new-batch");
-      },
+      discardReleasePreview: async ({ batch_id }) => { discarded.push(batch_id); return true; },
     }, { scopeId: scope.scope.id, selectedChangeIds: ["a"], activeChangeId: "a" }, { backToChanges: () => undefined, openSources: () => undefined });
 
     await flushDomUpdates();
     await flushDomUpdates();
 
-    expect(root.innerHTML).toContain("文章 · 本次选择 2 项");
-    expect(root.innerHTML).toContain('<h1 id="review-preview-title">发布预览</h1>');
-    expect(root.innerHTML).toContain('data-action="confirm-publish" data-batch-id="persisted-batch"');
-    expect(previewRequests).toBe(0);
+    expect(root.innerHTML).toContain("文章 · 本次选择 1 项");
+    expect(root.innerHTML).toContain('<h1 id="review-ready-title">发布评审</h1>');
+    expect(root.innerHTML).toContain('data-change-id="a"');
+    expect(root.innerHTML).not.toContain('data-change-id="b"');
+    expect(discarded).toEqual(["persisted-batch"]);
   });
 
-  it("restores the target's persisted preview when entering from another source", async () => {
+  it("does not let another scope's preview replace the clicked change", async () => {
     const root = new ReviewDomRoot();
-    let previewRequests = 0;
+    const discarded: string[] = [];
     const sourceAChange = change("added", "a");
     const sourceBChange = { ...change("updated", "b"), scope_id: secondScope.scope.id, title: "来自第二来源的变更" };
 
@@ -120,21 +118,82 @@ describe("focused change review", () => {
       listChanges: async (scopeId) => scopeId === scope.scope.id ? [sourceAChange, change("updated", "b")] : [sourceBChange],
       listTargets: async () => [target],
       activeReleasePreview: async () => plan("persisted-batch"),
-      previewRelease: async () => {
-        previewRequests += 1;
-        return plan("new-batch");
-      },
+      discardReleasePreview: async ({ batch_id }) => { discarded.push(batch_id); return true; },
     }, { scopeId: secondScope.scope.id, selectedChangeIds: [sourceBChange.id], activeChangeId: sourceBChange.id }, { backToChanges: () => undefined, openSources: () => undefined });
 
     await flushDomUpdates();
     await flushDomUpdates();
 
-    expect(root.innerHTML).toContain("文章 · 本次选择 2 项");
-    expect(root.innerHTML).toContain('<h1 id="review-preview-title">发布预览</h1>');
-    expect(root.innerHTML).toContain('data-change-id="a"');
-    expect(root.innerHTML).not.toContain("来自第二来源的变更");
-    expect(root.innerHTML).toContain('data-action="confirm-publish" data-batch-id="persisted-batch"');
-    expect(previewRequests).toBe(0);
+    expect(root.innerHTML).toContain("产品反馈 · 本次选择 1 项");
+    expect(root.innerHTML).toContain('<h1 id="review-ready-title">发布评审</h1>');
+    expect(root.innerHTML).toContain("来自第二来源的变更");
+    expect(root.innerHTML).not.toContain('data-change-id="a"');
+    expect(discarded).toEqual(["persisted-batch"]);
+  });
+
+  it("discards an unconfirmed preview when the review page is disposed", async () => {
+    const root = new ReviewDomRoot();
+    const discarded: string[] = [];
+    const controller = mountChangeReview(root as unknown as HTMLElement, {
+      listScopes: async () => [scope],
+      listChanges: async () => [change("added", "a")],
+      listTargets: async () => [target],
+      previewRelease: async () => plan("batch-temporary"),
+      discardReleasePreview: async ({ batch_id }) => { discarded.push(batch_id); return true; },
+    }, { scopeId: scope.scope.id, selectedChangeIds: ["a"], activeChangeId: "a" }, { backToChanges: () => undefined, openSources: () => undefined });
+
+    await flushDomUpdates();
+    root.clickAction("preview-release");
+    await flushDomUpdates();
+    await flushDomUpdates();
+    controller.dispose();
+
+    expect(discarded).toEqual(["batch-temporary"]);
+  });
+
+  it("discards a preview created while the target list is still loading when the review page is disposed", async () => {
+    const root = new ReviewDomRoot();
+    const discarded: string[] = [];
+    let resolveTargets: ((targets: ConnectedTarget[]) => void) | undefined;
+    const targets = new Promise<ConnectedTarget[]>((resolve) => { resolveTargets = resolve; });
+    const controller = mountChangeReview(root as unknown as HTMLElement, {
+      listScopes: async () => [scope],
+      listChanges: async () => [change("added", "a")],
+      listTargets: async () => targets,
+      previewRelease: async () => plan("batch-loading-target"),
+      discardReleasePreview: async ({ batch_id }) => { discarded.push(batch_id); return true; },
+    }, { scopeId: scope.scope.id, selectedChangeIds: ["a"], activeChangeId: "a" }, { backToChanges: () => undefined, openSources: () => undefined });
+
+    await flushDomUpdates();
+    root.clickAction("preview-release");
+    await flushDomUpdates();
+    controller.dispose();
+    resolveTargets?.([target]);
+    await flushDomUpdates();
+
+    expect(discarded).toEqual(["batch-loading-target"]);
+  });
+
+  it("discards a preview when publication fails before it starts", async () => {
+    const root = new ReviewDomRoot();
+    const discarded: string[] = [];
+    mountChangeReview(root as unknown as HTMLElement, {
+      listScopes: async () => [scope],
+      listChanges: async () => [change("added", "a")],
+      listTargets: async () => [target],
+      previewRelease: async () => plan("batch-publish-failed"),
+      publishRelease: async () => { throw new Error("发布未开始"); },
+      discardReleasePreview: async ({ batch_id }) => { discarded.push(batch_id); return true; },
+    }, { scopeId: scope.scope.id, selectedChangeIds: ["a"], activeChangeId: "a" }, { backToChanges: () => undefined, openSources: () => undefined });
+
+    await flushDomUpdates();
+    root.clickAction("preview-release");
+    await flushDomUpdates();
+    await flushDomUpdates();
+    root.clickAction("confirm-publish", { batchId: "batch-publish-failed" });
+    await flushDomUpdates();
+
+    expect(discarded).toEqual(["batch-publish-failed"]);
   });
 
   it("uses icon-only previous and next controls and turns the final next action into preview", () => {
@@ -173,7 +232,7 @@ describe("focused change review", () => {
     expect(html).toContain("--- removed");
     expect(html).toContain("+++ added");
     expect(html).toContain(">1</span><span class=\"review-diff-number\" aria-hidden=\"true\"></span>");
-    expect(html).toContain("><\/span><span class=\"review-diff-number\" aria-hidden=\"true\">2</span>");
+    expect(html).toContain("><\/span><span class=\"review-diff-number\" aria-hidden=\"true\">1</span>");
   });
 
   it("renders only diffs owned by the active change when target paths share a basename", () => {
