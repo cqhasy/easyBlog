@@ -1,6 +1,7 @@
 use std::{io, path::Path, path::PathBuf, sync::Mutex};
 
 use rusqlite::{params, types::Type, Connection, OptionalExtension, Result};
+use serde::Serialize;
 
 use crate::releases::{
     ArticleBinding, BatchState, BindingOutputKind, BindingRevision, BindingRevisionState,
@@ -33,6 +34,29 @@ pub struct LedgerOperation {
     pub binding_id: String,
     pub ordinal: i64,
     pub operation: ReleaseOperation,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HistoryObjectKind {
+    Article,
+    Resource,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HistoryChangeKind {
+    Added,
+    Updated,
+    Deleted,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct HistoryOperation {
+    pub target_path: String,
+    pub object_kind: HistoryObjectKind,
+    pub change_kind: HistoryChangeKind,
+    pub display_name: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -214,6 +238,41 @@ impl LedgerRepository {
         let mut statement = connection.prepare("SELECT operation_id, binding_id, ordinal, target_path, operation_kind, before_hash, after_hash, before_blob_sha, after_blob_sha FROM release_operations WHERE batch_id = ?1 ORDER BY ordinal")?;
         let operations = statement
             .query_map([batch_id], operation_row)?
+            .collect::<Result<Vec<_>>>()?;
+        Ok(operations)
+    }
+
+    pub fn load_history_operations(&self, batch_id: &str) -> Result<Vec<HistoryOperation>> {
+        let connection = self
+            .connection
+            .lock()
+            .expect("ledger repository lock poisoned");
+        let mut statement = connection.prepare(
+            "SELECT operations.target_path,
+                    operations.operation_kind,
+                    operations.before_hash,
+                    COALESCE(after_outputs.output_kind, before_outputs.output_kind),
+                    source_transitions.before_title,
+                    source_transitions.after_title
+             FROM release_operations operations
+             JOIN article_bindings bindings ON bindings.binding_id = operations.binding_id
+             LEFT JOIN release_binding_transitions transitions
+               ON transitions.batch_id = operations.batch_id
+              AND transitions.binding_id = operations.binding_id
+             LEFT JOIN binding_outputs after_outputs
+               ON after_outputs.revision_id = transitions.after_revision_id
+              AND after_outputs.target_path = operations.target_path
+             LEFT JOIN binding_outputs before_outputs
+               ON before_outputs.revision_id = transitions.before_revision_id
+              AND before_outputs.target_path = operations.target_path
+             LEFT JOIN release_source_transitions source_transitions
+               ON source_transitions.batch_id = operations.batch_id
+              AND source_transitions.source_identity = bindings.source_identity
+             WHERE operations.batch_id = ?1
+             ORDER BY operations.ordinal",
+        )?;
+        let operations = statement
+            .query_map([batch_id], history_operation_row)?
             .collect::<Result<Vec<_>>>()?;
         Ok(operations)
     }
@@ -593,6 +652,44 @@ fn operation_row(row: &rusqlite::Row<'_>) -> Result<LedgerOperation> {
     })
 }
 
+fn history_operation_row(row: &rusqlite::Row<'_>) -> Result<HistoryOperation> {
+    let target_path: String = row.get(0)?;
+    let operation_kind: String = row.get(1)?;
+    let before_hash: Option<String> = row.get(2)?;
+    let object_kind = match row.get::<_, Option<String>>(3)?.as_deref() {
+        Some("article") => HistoryObjectKind::Article,
+        Some("resource") => HistoryObjectKind::Resource,
+        _ => return Err(rusqlite::Error::InvalidQuery),
+    };
+    let change_kind = match (operation_kind.as_str(), before_hash.is_some()) {
+        ("write", false) => HistoryChangeKind::Added,
+        ("write", true) => HistoryChangeKind::Updated,
+        ("delete", _) => HistoryChangeKind::Deleted,
+        _ => return Err(rusqlite::Error::InvalidQuery),
+    };
+    let fallback_name = Path::new(&target_path)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .filter(|name| !name.is_empty())
+        .unwrap_or(&target_path)
+        .to_owned();
+    let display_name = match object_kind {
+        HistoryObjectKind::Article => row
+            .get::<_, Option<String>>(5)?
+            .or(row.get::<_, Option<String>>(4)?)
+            .filter(|title| !title.trim().is_empty())
+            .unwrap_or(fallback_name),
+        HistoryObjectKind::Resource => fallback_name,
+    };
+
+    Ok(HistoryOperation {
+        target_path,
+        object_kind,
+        change_kind,
+        display_name,
+    })
+}
+
 fn optional_hash(row: &rusqlite::Row<'_>, index: usize) -> Result<Option<ContentHash>> {
     Ok(row.get::<_, Option<String>>(index)?.map(ContentHash))
 }
@@ -787,6 +884,44 @@ mod tests {
             }],
         }
     }
+
+    #[test]
+    fn history_operations_keep_immutable_title_and_change_kind() {
+        let path = temp_db();
+        create_scope_and_target(&path);
+        let ledger = LedgerRepository::open(&path).unwrap();
+        ledger.create_preview(&preview()).unwrap();
+
+        assert_eq!(
+            ledger.load_history_operations("batch").unwrap(),
+            vec![HistoryOperation {
+                target_path: "_posts/post.md".into(),
+                object_kind: HistoryObjectKind::Article,
+                change_kind: HistoryChangeKind::Added,
+                display_name: "Post".into(),
+            }]
+        );
+
+        drop(ledger);
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn history_operations_fall_back_to_ledger_target_basename_without_title() {
+        let path = temp_db();
+        create_scope_and_target(&path);
+        let mut record = preview();
+        record.source_transitions[0].after.as_mut().unwrap().title = None;
+        let ledger = LedgerRepository::open(&path).unwrap();
+        ledger.create_preview(&record).unwrap();
+
+        let operations = ledger.load_history_operations("batch").unwrap();
+
+        assert_eq!(operations[0].display_name, "post.md");
+        drop(ledger);
+        std::fs::remove_file(path).unwrap();
+    }
+
     #[test]
     fn preview_persists_operations_and_target_sequence_after_reopen() {
         let path = temp_db();
@@ -900,6 +1035,29 @@ mod tests {
         drop(connection);
 
         assert!(ledger.load_source_transitions("batch").is_err());
+
+        drop(ledger);
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn discarding_a_preview_releases_its_target_reservation() {
+        let path = temp_db();
+        create_scope_and_target(&path);
+        let ledger = LedgerRepository::open(&path).unwrap();
+        ledger.create_preview(&preview()).unwrap();
+
+        assert!(ledger
+            .invalidate_preview("batch", "preview_discarded")
+            .unwrap());
+        assert!(ledger.active_preview("target").unwrap().is_none());
+        assert_eq!(
+            ledger.load_batch("batch").unwrap().unwrap().state,
+            BatchState::Invalidated
+        );
+        assert!(!ledger
+            .invalidate_preview("batch", "preview_discarded")
+            .unwrap());
 
         drop(ledger);
         std::fs::remove_file(path).unwrap();

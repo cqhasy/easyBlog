@@ -60,6 +60,7 @@ pub fn run() {
             commands::changes::list_changes,
             commands::releases::active_release_preview,
             commands::releases::preview_release,
+            commands::releases::discard_release_preview,
             commands::releases::publish_release,
             commands::history::list_publications,
             commands::history::retry_release,

@@ -9,6 +9,10 @@ export function activeReleasePreview(input: { scope_id: ScopeId }): Promise<Rele
   return invoke<ReleasePlan | null>("active_release_preview", { input });
 }
 
+export function discardReleasePreview(input: { batch_id: string }): Promise<boolean> {
+  return invoke<boolean>("discard_release_preview", { input });
+}
+
 export function publishRelease(input: { batch_id: string }): Promise<Publication> {
   return invoke<Publication>("publish_release", { input });
 }

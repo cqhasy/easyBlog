@@ -1,5 +1,5 @@
 import { listChanges } from "../../bridge/changes";
-import { activeReleasePreview, previewRelease, publishRelease } from "../../bridge/releases";
+import { activeReleasePreview, discardReleasePreview, previewRelease, publishRelease } from "../../bridge/releases";
 import { listScopes } from "../../bridge/sources";
 import { listTargets } from "../../bridge/targets";
 import type { Change, ChangeKind, ConnectedTarget, FileChangeKind, Publication, ReleasePlan, ScopeId, ScopeSummary } from "../../contracts";
@@ -20,9 +20,12 @@ export type ReviewContext = { scopeId: ScopeId; selectedChangeIds: string[]; act
 export type ReviewNavigation = { backToChanges: (context: Pick<ReviewContext, "scopeId" | "selectedChangeIds">) => void; openSources: () => void };
 export type ReviewApi = Pick<ChangesApi, "listScopes" | "listChanges" | "listTargets"> & {
   activeReleasePreview?: (input: { scope_id: ScopeId }) => Promise<ReleasePlan | null>;
+  discardReleasePreview?: (input: { batch_id: string }) => Promise<boolean>;
   previewRelease?: (input: { scope_id: ScopeId; change_ids: string[] }) => Promise<ReleasePlan>;
   publishRelease?: (input: { batch_id: string }) => Promise<Publication>;
 };
+
+export type ChangeReviewController = { dispose: () => void };
 
 const changeKindLabels: Record<ChangeKind, string> = { added: "新增", updated: "更新", moved: "移动", deleted: "删除", blocked: "需要处理" };
 const fileChangeKindLabels: Record<FileChangeKind, string> = { added: "新增", modified: "修改", deleted: "删除", unchanged: "未变化" };
@@ -147,9 +150,9 @@ function renderDiffPatch(patch: string): { html: string; stats: string } {
 
 function displayedDiffs(change: Change, plan?: ReleasePlan) {
   if (!plan) return [];
-  const exact = plan.diffs.filter((diff) => diff.path === change.source_path);
-  if (exact.length) return exact;
-  return plan.diffs.length === 1 ? plan.diffs : plan.diffs.filter((diff) => diff.path.endsWith(`/${change.source_path.split("/").at(-1)}`));
+  const tagged = plan.diffs.filter((diff) => (diff as { change_id?: string }).change_id === change.id);
+  if (tagged.length) return tagged;
+  return plan.diffs.length === 1 ? plan.diffs : [];
 }
 
 function renderReviewContent(change: Change | undefined, plan?: ReleasePlan): string {
@@ -183,15 +186,25 @@ export function renderChangeReview(state: ReviewState, query = ""): string {
   return `<section class="review-page" aria-labelledby="${titleId}"><header class="review-header"><button type="button" class="back-button" data-action="back-to-changes" aria-label="返回变更" title="返回变更"><i data-lucide="arrow-left" aria-hidden="true"></i></button><div><p class="review-crumb">${escapeHtml(state.scope.scope.name)} · 本次选择 ${state.selectedChanges.length} 项</p><h1 id="${titleId}">${title}</h1></div>${renderReviewPosition(state)}</header><div class="review-layout">${renderSequence(state, query)}<section class="review-pane">${renderReviewContent(activeFrom(state), state.status === "preview" ? state.plan : undefined)}</section></div>${footer}</section>`;
 }
 
-export function mountChangeReview(root: HTMLElement, api: ReviewApi = { listScopes, listChanges, listTargets, activeReleasePreview, previewRelease, publishRelease }, context: ReviewContext, navigation: ReviewNavigation, onRendered: () => void = () => undefined): void {
+export function mountChangeReview(root: HTMLElement, api: ReviewApi = { listScopes, listChanges, listTargets, activeReleasePreview, discardReleasePreview, previewRelease, publishRelease }, context: ReviewContext, navigation: ReviewNavigation, onRendered: () => void = () => undefined): ChangeReviewController {
   let state: ReviewState = { status: "loading" };
   let reviewScope: ScopeSummary | undefined;
   let reviewChanges: Change[] = [];
   let query = "";
   let generation = 0;
+  let previewBatchId: string | undefined;
+  let publishingBatchId: string | undefined;
+  const discardedPreviewBatchIds = new Set<string>();
+  let disposed = false;
   let publishDialogSession: { dialog: HTMLDialogElement; opener: HTMLElement; nativeModal: boolean } | undefined;
   const render = () => { root.innerHTML = renderChangeReview(state, query); onRendered(); };
   const backContext = () => ({ scopeId: reviewScope?.scope.id ?? context.scopeId, selectedChangeIds: reviewChanges.length ? reviewChanges.map((change) => change.id) : context.selectedChangeIds });
+  const discardPreview = (batchId = previewBatchId) => {
+    if (!batchId || discardedPreviewBatchIds.has(batchId)) return;
+    discardedPreviewBatchIds.add(batchId);
+    if (previewBatchId === batchId) previewBatchId = undefined;
+    void api.discardReleasePreview?.({ batch_id: batchId });
+  };
   const load = async () => {
     const current = ++generation; state = { status: "loading" }; render();
     try {
@@ -201,36 +214,11 @@ export function mountChangeReview(root: HTMLElement, api: ReviewApi = { listScop
       const activePlan = await api.activeReleasePreview?.({ scope_id: requestedScope.scope.id });
       if (current !== generation) return;
       if (activePlan) {
-        const activeScope = scopes.find((item) => item.scope.id === activePlan.batch.scope_id);
-        if (!activeScope) {
-          state = { status: "error", message: "已有的发布预览所属来源已不可用。请返回来源页检查发布目标。", recovery: "open-sources" };
-          render();
-          return;
-        }
-        const changes = await api.listChanges(activeScope.scope.id);
+        await api.discardReleasePreview?.({ batch_id: activePlan.batch.id });
         if (current !== generation) return;
-        const byId = new Map(changes.filter((change) => change.kind !== "blocked").map((change) => [change.id, change]));
-        const activeChanges = activePlan.batch.change_ids.flatMap((id) => {
-          const change = byId.get(id);
-          return change ? [change] : [];
-        });
-        const targets = await (api.listTargets?.() ?? Promise.resolve([]));
-        if (current !== generation) return;
-        const target = targets.find((item) => item.id === activePlan.batch.target_id);
-        if (!target || activeChanges.length !== activePlan.batch.change_ids.length) {
-          state = { status: "error", message: "已有的发布预览无法恢复。请返回变更列表检查当前内容和发布目标。", recovery: !target ? "open-sources" : "back-to-changes" };
-          render();
-          return;
-        }
-        reviewScope = activeScope;
-        reviewChanges = activeChanges;
-        const activeChangeId = reviewChanges.some((change) => change.id === context.activeChangeId) ? context.activeChangeId : reviewChanges[0].id;
-        state = { status: "preview", scope: activeScope, selectedChanges: reviewChanges, activeChangeId, viewedChangeIds: [activeChangeId], plan: activePlan, target };
-        render();
-        return;
       }
       const changes = await api.listChanges(requestedScope.scope.id);
-      if (current !== generation) return;
+      if (current !== generation || disposed) return;
       const byId = new Map(changes.filter((change) => change.kind !== "blocked").map((change) => [change.id, change]));
       reviewChanges = context.selectedChangeIds.flatMap((id) => { const change = byId.get(id); return change ? [change] : []; });
       if (!reviewChanges.length) { state = { status: "error", message: "所选变更已不存在或暂时无法发布。请返回变更列表重新选择。", recovery: "back-to-changes" }; render(); return; }
@@ -246,9 +234,17 @@ export function mountChangeReview(root: HTMLElement, api: ReviewApi = { listScop
     const current = ++generation;
     state = { status: "previewing", scope: reviewScope, selectedChanges: reviewChanges, activeChangeId: previous?.activeChangeId ?? reviewChanges[0].id, viewedChangeIds: previous ? viewedIds(previous) : [] }; render();
     void api.previewRelease({ scope_id: reviewScope.scope.id, change_ids: reviewChanges.map((change) => change.id) }).then(async (plan) => {
-      const targets = await (api.listTargets?.() ?? Promise.resolve([]));
-      if (current !== generation) return;
+      previewBatchId = plan.batch.id;
+      let targets: ConnectedTarget[];
+      try {
+        targets = await (api.listTargets?.() ?? Promise.resolve([]));
+      } catch (error) {
+        discardPreview(plan.batch.id);
+        throw error;
+      }
+      if (current !== generation || disposed) { discardPreview(plan.batch.id); return; }
       const target = targets.find((item) => item.id === plan.batch.target_id);
+      if (!target) discardPreview(plan.batch.id);
       state = target ? { status: "preview", scope: reviewScope!, selectedChanges: reviewChanges, activeChangeId: previous?.activeChangeId ?? reviewChanges[0].id, viewedChangeIds: previous ? viewedIds(previous) : [], plan, target } : { status: "error", message: "当前范围的发布目标不可用，请在来源页重新连接或绑定。", recovery: "open-sources" };
       render();
     }).catch((error) => { if (current === generation) { state = { status: "error", message: errorMessage(error, "发布预览没有完成"), recovery: "retry-preview" }; render(); } });
@@ -275,7 +271,14 @@ export function mountChangeReview(root: HTMLElement, api: ReviewApi = { listScop
     if (action === "return-to-review" && state.status === "preview") { state = { status: "ready", scope: state.scope, selectedChanges: state.selectedChanges, activeChangeId: state.activeChangeId, viewedChangeIds: state.viewedChangeIds }; render(); return; }
     if (action === "open-publish-dialog" && state.status === "preview" && element) { const dialog = root.querySelector<HTMLDialogElement>("[data-publish-dialog]"); if (!dialog) return; publishDialogSession = { dialog, opener: element, nativeModal: false }; if (typeof dialog.showModal === "function") { try { dialog.showModal(); publishDialogSession.nativeModal = true; } catch { dialog.setAttribute("open", ""); } } else dialog.setAttribute("open", ""); return; }
     if (action === "cancel-publish") { closeDialog(); return; }
-    if (action === "confirm-publish" && state.status === "preview" && api.publishRelease && element?.dataset.batchId === state.plan.batch.id) { const { plan, target } = state; closeDialog(); const current = ++generation; state = { status: "publishing", plan, target }; render(); void api.publishRelease({ batch_id: plan.batch.id }).then((publication) => { if (current === generation) { state = { status: "published", plan, publication }; render(); } }).catch((error) => { if (current === generation) { state = { status: "error", message: errorMessage(error, "发布没有完成"), recovery: "retry-preview" }; render(); } }); }
+    if (action === "confirm-publish" && state.status === "preview" && api.publishRelease && element?.dataset.batchId === state.plan.batch.id) { const { plan, target } = state; closeDialog(); const current = ++generation; previewBatchId = undefined; publishingBatchId = plan.batch.id; state = { status: "publishing", plan, target }; render(); void api.publishRelease({ batch_id: plan.batch.id }).then((publication) => { publishingBatchId = undefined; if (current === generation) { state = { status: "published", plan, publication }; render(); } }).catch((error) => { publishingBatchId = undefined; discardPreview(plan.batch.id); if (current === generation && !disposed) { state = { status: "error", message: errorMessage(error, "发布没有完成"), recovery: "retry-preview" }; render(); } }); }
   });
   void load();
+  return {
+    dispose: () => {
+      disposed = true;
+      generation += 1;
+      if (!publishingBatchId) discardPreview();
+    },
+  };
 }

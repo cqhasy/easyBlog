@@ -78,6 +78,8 @@ export function createAppController(
   let activeLoginGeneration: number | undefined;
   let sourcesResourceId: string | undefined;
   let pageGeneration = 0;
+  let mountedPage: string | undefined;
+  let disposeReview: (() => void) | undefined;
   const dashboardCheckedAtByScope = new Map<ScopeId, string>();
   let browserAuthorizationPoll: ReturnType<typeof setInterval> | undefined;
   let browserAuthorizationCheckInFlight = false;
@@ -132,7 +134,7 @@ export function createAppController(
       return;
     }
     if (view.page === "review") {
-      mountChangeReview(content, undefined, view, {
+      const review = mountChangeReview(content, undefined, view, {
         backToChanges: (context) => {
           if (!isCurrentPage()) return;
           viewState.navigate({ page: "changes", ...context });
@@ -144,10 +146,11 @@ export function createAppController(
           render();
         },
       }, hydrateIcons);
+      disposeReview = review.dispose;
       return;
     }
     if (view.page === "history") {
-      mountHistory(content);
+      mountHistory(content, undefined, hydrateIcons);
       return;
     }
     if (view.page === "sources") {
@@ -199,15 +202,24 @@ export function createAppController(
   const render = () => {
     if (startupState.kind !== "ready") {
       pageGeneration += 1;
+      disposeReview?.();
+      disposeReview = undefined;
+      mountedPage = undefined;
       root.innerHTML = renderStartupSurface(startupState);
       return;
     }
+    const nextView = viewState.current();
+    if (mountedPage === "review" && nextView.page !== "review") {
+      disposeReview?.();
+      disposeReview = undefined;
+    }
     root.innerHTML = renderAppShell(
-      viewState.current(),
+      nextView,
       resolveSidebarMode(viewState.sidebarPreference(), viewportWidth),
     );
     hydrateIcons();
     renderCurrentPage();
+    mountedPage = nextView.page;
   };
 
   const updateSidebarMode = () => {
@@ -389,6 +401,8 @@ export function createAppController(
       activeLoginGeneration = undefined;
       clearBrowserAuthorizationPolling();
       pageGeneration += 1;
+      disposeReview?.();
+      disposeReview = undefined;
     },
   };
 

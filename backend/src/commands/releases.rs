@@ -17,6 +17,11 @@ pub struct ActiveReleasePreviewCommandInput {
     pub scope_id: String,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct DiscardReleasePreviewCommandInput {
+    pub batch_id: String,
+}
+
 #[tauri::command]
 pub async fn active_release_preview(
     state: State<'_, AppState>,
@@ -75,6 +80,26 @@ pub async fn preview_release(
         AppError::new(
             "preview_task_failed",
             "Release preview could not be completed",
+        )
+    })?
+}
+
+#[tauri::command]
+pub async fn discard_release_preview(
+    state: State<'_, AppState>,
+    input: DiscardReleasePreviewCommandInput,
+) -> AppResult<bool> {
+    let ledger = state.ledger.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        ledger
+            .invalidate_preview(&input.batch_id, "preview_discarded")
+            .map_err(|_| AppError::new("storage_error", "Release preview could not be discarded"))
+    })
+    .await
+    .map_err(|_| {
+        AppError::new(
+            "preview_task_failed",
+            "Release preview could not be discarded",
         )
     })?
 }
