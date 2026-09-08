@@ -1,12 +1,16 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { ConnectedTarget, GithubAuthorization, GithubRepository, InitializationPreview, LayoutCandidate } from "../contracts";
+import type { ConnectedTarget, GithubAuthorization, GithubLoginLaunch, GithubLoginProgress, GithubRepository, InitializationPreview, LayoutCandidate } from "../contracts";
 
 export function githubAuthorizationStatus(): Promise<GithubAuthorization> {
   return invoke<GithubAuthorization>("github_authorization_status");
 }
 
-export function startGithubLogin(): Promise<GithubAuthorization> {
-  return invoke<GithubAuthorization>("start_github_login");
+export function startGithubLogin(): Promise<GithubLoginLaunch> {
+  return invoke<GithubLoginLaunch>("start_github_login");
+}
+
+export function githubLoginStatus(): Promise<GithubLoginProgress> {
+  return invoke<GithubLoginProgress>("github_login_status");
 }
 
 export function listTargets(): Promise<ConnectedTarget[]> {
