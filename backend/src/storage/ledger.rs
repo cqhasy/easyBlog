@@ -182,6 +182,30 @@ impl LedgerRepository {
             .optional()
     }
 
+    pub fn invalidate_preview(&self, batch_id: &str, failure_code: &str) -> Result<bool> {
+        let mut connection = self
+            .connection
+            .lock()
+            .expect("ledger repository lock poisoned");
+        let transaction = connection.transaction()?;
+        let invalidated = transaction.execute(
+            "UPDATE release_batches
+             SET state = 'invalidated', failure_code = ?2
+             WHERE batch_id = ?1 AND state = 'previewed'",
+            params![batch_id, failure_code],
+        )?;
+        if invalidated == 1 {
+            transaction.execute(
+                "UPDATE target_revisions
+                 SET active_batch_id = NULL
+                 WHERE active_batch_id = ?1",
+                [batch_id],
+            )?;
+        }
+        transaction.commit()?;
+        Ok(invalidated == 1)
+    }
+
     pub fn load_operations(&self, batch_id: &str) -> Result<Vec<LedgerOperation>> {
         let connection = self
             .connection
@@ -772,6 +796,10 @@ mod tests {
         drop(ledger);
         let reopened = LedgerRepository::open(&path).unwrap();
         assert_eq!(reopened.load_operations("batch").unwrap().len(), 1);
+        assert_eq!(
+            reopened.active_preview("target").unwrap().unwrap().id,
+            "batch"
+        );
         assert_eq!(
             reopened
                 .load_batch("batch")

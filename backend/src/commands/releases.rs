@@ -12,6 +12,39 @@ pub struct PreviewReleaseCommandInput {
     pub change_ids: Vec<String>,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct ActiveReleasePreviewCommandInput {
+    pub scope_id: String,
+}
+
+#[tauri::command]
+pub async fn active_release_preview(
+    state: State<'_, AppState>,
+    input: ActiveReleasePreviewCommandInput,
+) -> AppResult<Option<crate::releases::ReleasePlan>> {
+    let sources = state.sources.clone();
+    let scopes = state.scopes.clone();
+    let changes = state.changes.clone();
+    let ledger = state.ledger.clone();
+    let targets = state.targets.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        actions::github_auth::require_ready()?;
+        let target = target_for_scope(&scopes, &targets, &input.scope_id)?;
+        actions::preview_release::load_active(
+            &sources,
+            &scopes,
+            &changes,
+            &ledger,
+            actions::preview_release::ActivePreviewInput {
+                scope_id: input.scope_id,
+                target,
+            },
+        )
+    })
+    .await
+    .map_err(|_| AppError::new("preview_task_failed", "Release preview could not be loaded"))?
+}
+
 #[tauri::command]
 pub async fn preview_release(
     state: State<'_, AppState>,

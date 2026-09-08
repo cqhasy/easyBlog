@@ -1,5 +1,5 @@
-import { describe, expect, it, vi } from "vitest";
-import type { ScopeSummary, Source } from "../../contracts";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import type { ConnectedTarget, ScopeSummary, Source } from "../../contracts";
 import {
   addSourceAndReload,
   createRepositoryRefreshController,
@@ -7,7 +7,10 @@ import {
   createTargetConfigurationRequestController,
   formatSourcePath,
   loadSources,
+  mountSources,
   notifyScopesChanged,
+  renderResourceOverview,
+  renderResources,
   renderSources,
   scopeLabel,
 } from "./index";
@@ -19,6 +22,69 @@ const source: Source = {
   type: "local_directory",
   created_at: "2026-09-02T00:00:00Z",
 };
+
+const summary: ScopeSummary = {
+  scope: {
+    id: "scope-1",
+    source_id: source.id,
+    target_id: "target-1",
+    name: "Posts",
+    lifecycle: "active",
+    revision: 1,
+    selections: [],
+    include_patterns: [],
+    exclude_patterns: [],
+    created_at: source.created_at,
+    updated_at: source.created_at,
+  },
+  health: "ready",
+  diagnostics: [],
+};
+
+class TestFormElement {
+  constructor(readonly id: string) {}
+}
+
+class SourcesDomRoot {
+  innerHTML = "";
+  private submitHandler: ((event: SubmitEvent) => void) | undefined;
+  private clickHandler: ((event: MouseEvent) => void) | undefined;
+
+  addEventListener(type: string, listener: EventListenerOrEventListenerObject): void {
+    if (type === "submit" && typeof listener === "function") {
+      this.submitHandler = listener as (event: SubmitEvent) => void;
+    }
+    if (type === "click" && typeof listener === "function") {
+      this.clickHandler = listener as (event: MouseEvent) => void;
+    }
+  }
+
+  clickAction(action: string): void {
+    expect(this.innerHTML).toContain(`data-action="${action}"`);
+    const target = {
+      dataset: { action },
+      closest: <T extends HTMLElement>(selector: string): T | null =>
+        selector === "[data-action]" ? target as unknown as T : null,
+    };
+    this.clickHandler?.({ target } as unknown as MouseEvent);
+  }
+
+  submit(id: string): void {
+    const form = new TestFormElement(id);
+    this.submitHandler?.({
+      target: form,
+      preventDefault: vi.fn(),
+    } as unknown as SubmitEvent);
+  }
+}
+
+async function flushDomUpdates(): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, 0));
+}
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
 
 describe("sources feature", () => {
   it("returns ready state with sources after loading", async () => {
@@ -43,7 +109,7 @@ describe("sources feature", () => {
 
   it("uses the fallback when an Error has no message", async () => {
     const state = await loadSources({ listSources: vi.fn().mockRejectedValue(new Error()) });
-    expect(state).toEqual({ status: "error", message: "Sources could not be loaded" });
+    expect(state).toEqual({ status: "error", message: "来源无法加载" });
   });
 
   it("preserves structured Tauri error messages", async () => {
@@ -148,5 +214,105 @@ describe("sources feature", () => {
 
     expect(controller.isCurrent(first)).toBe(false);
     expect(controller.isCurrent(second)).toBe(true);
+  });
+
+  it("renders source and target resources without embedding an editor form", () => {
+    const html = renderResourceOverview({
+      kind: "source",
+      id: source.id,
+      source,
+      scopes: [summary],
+    });
+
+    expect(html).toContain('data-action="edit-source"');
+    expect(html).not.toContain('id="scope-form"');
+    expect(html).not.toContain('name="posts-directory"');
+  });
+
+  it("renders an actionable target-empty state", () => {
+    expect(renderResources({ status: "ready", sources: [source], targets: [] }))
+      .toContain('data-action="connect-target"');
+  });
+
+  it("uses Chinese resource copy and blue-gray primary actions in the overview", () => {
+    const html = renderResources({
+      status: "ready",
+      sources: [source],
+      scopes: [summary],
+      targets: [],
+    });
+
+    expect(html).toContain('<p class="eyebrow">内容资源</p>');
+    expect(html).not.toContain("EASYBLOG / SOURCES");
+    expect(html).toContain('<section class="resource-overview-region" aria-label="资源详情">');
+    expect(html).toContain('class="task-primary-button" data-action="add-source"');
+    expect(html).toContain('class="task-primary-button" data-action="connect-target"');
+    expect(renderResourceOverview({
+      kind: "source",
+      id: source.id,
+      source,
+      scopes: [summary],
+    })).toContain('class="task-primary-button" data-action="edit-source"');
+  });
+
+  it("labels loading, error, and ready resource regions from the same page heading", () => {
+    const states = [
+      renderResources({ status: "loading" }),
+      renderResources({ status: "error", message: "资源不可用" }),
+      renderResources({ status: "ready", sources: [source], scopes: [summary], targets: [] }),
+    ];
+
+    for (const html of states) {
+      expect(html).toContain('<section class="sources-page resource-page" aria-labelledby="sources-title">');
+      expect(html).toContain('<h1 id="sources-title">内容来源</h1>');
+      expect(html).not.toContain("<main");
+    }
+  });
+
+  it("does not open a connected target after the Sources mount is no longer active", async () => {
+    vi.stubGlobal("HTMLFormElement", TestFormElement);
+    const root = new SourcesDomRoot();
+    const openTargetEditor = vi.fn();
+    let active = true;
+    let resolveConnectedTarget!: (target: ConnectedTarget) => void;
+    const connectTarget = vi.fn(() => new Promise<ConnectedTarget>((resolve) => {
+      resolveConnectedTarget = resolve;
+    }));
+
+    mountSources(root as unknown as HTMLElement, {
+      listSources: async () => [],
+      listScopes: async () => [],
+      listTargets: async () => [],
+      refreshGithubRepositoryPermissions: async () => [{
+        repository: "owner/blog",
+        default_branch: "main",
+        visibility: "public",
+        description: null,
+      }],
+      connectTarget,
+    }, {
+      openSourceEditor: vi.fn(),
+      openTargetEditor,
+    }, undefined, () => active);
+
+    await flushDomUpdates();
+    root.clickAction("connect-target");
+    await flushDomUpdates();
+    root.submit("connect-target-form");
+    active = false;
+    resolveConnectedTarget({
+      id: "target-1",
+      name: "Blog",
+      repository: "owner/blog",
+      default_branch: "main",
+      visibility: "public",
+      state: "needs_configuration",
+      layout: { posts_directory: "", resources_directory: "" },
+      created_at: source.created_at,
+    });
+    await flushDomUpdates();
+
+    expect(connectTarget).toHaveBeenCalledOnce();
+    expect(openTargetEditor).not.toHaveBeenCalled();
   });
 });

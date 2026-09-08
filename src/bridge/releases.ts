@@ -5,6 +5,10 @@ export function previewRelease(input: { scope_id: ScopeId; change_ids: ChangeId[
   return invoke<ReleasePlan>("preview_release", { input });
 }
 
+export function activeReleasePreview(input: { scope_id: ScopeId }): Promise<ReleasePlan | null> {
+  return invoke<ReleasePlan | null>("active_release_preview", { input });
+}
+
 export function publishRelease(input: { batch_id: string }): Promise<Publication> {
   return invoke<Publication>("publish_release", { input });
 }

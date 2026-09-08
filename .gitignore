@@ -2,3 +2,4 @@ node_modules/
 dist/
 backend/target/
 backend/gen/
+.superpowers/
