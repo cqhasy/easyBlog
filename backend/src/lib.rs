@@ -28,6 +28,7 @@ pub fn run() {
         .setup(|app| {
             let data_dir = app.path().app_data_dir()?;
             std::fs::create_dir_all(&data_dir)?;
+            diagnostics::logging::init_logging(&data_dir);
             let state = app::wiring::build_state(
                 data_dir.join("easyblog.sqlite"),
                 data_dir.join("workspaces"),
@@ -57,6 +58,7 @@ pub fn run() {
             commands::scopes::get_source_children,
             commands::changes::scan_scope,
             commands::changes::list_changes,
+            commands::releases::active_release_preview,
             commands::releases::preview_release,
             commands::releases::publish_release,
             commands::history::list_publications,

@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const { invoke } = vi.hoisted(() => ({ invoke: vi.fn() }));
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
 
-import { listPublications, previewRelease, publishRelease, retryRelease, rollbackPublication } from "./releases";
+import { activeReleasePreview, listPublications, previewRelease, publishRelease, retryRelease, rollbackPublication } from "./releases";
 
 describe("releases bridge", () => {
   beforeEach(() => invoke.mockReset());
@@ -12,6 +12,12 @@ describe("releases bridge", () => {
     invoke.mockResolvedValue({ preview_id: "batch-1" });
     await previewRelease({ scope_id: "scope-1", change_ids: ["change-1"] });
     expect(invoke).toHaveBeenCalledWith("preview_release", { input: { scope_id: "scope-1", change_ids: ["change-1"] } });
+  });
+
+  it("loads an existing preview for the current scope", async () => {
+    invoke.mockResolvedValue({ preview_id: "batch-1" });
+    await activeReleasePreview({ scope_id: "scope-1" });
+    expect(invoke).toHaveBeenCalledWith("active_release_preview", { input: { scope_id: "scope-1" } });
   });
 
   it("publishes only the persisted preview batch", async () => {

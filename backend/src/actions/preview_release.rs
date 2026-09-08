@@ -34,6 +34,113 @@ pub struct PreviewReleaseInput {
     pub change_ids: Vec<String>,
 }
 
+pub struct ActivePreviewInput {
+    pub scope_id: String,
+    pub target: Target,
+}
+
+pub fn load_active(
+    sources: &SourceRepository,
+    scopes: &ScopeRepository,
+    changes: &ChangeRepository,
+    ledger: &LedgerRepository,
+    input: ActivePreviewInput,
+) -> AppResult<Option<ReleasePlan>> {
+    let scope = scopes
+        .get(&input.scope_id)
+        .map_err(|_| AppError::new("storage_error", "Scope could not be loaded"))?
+        .ok_or_else(|| AppError::new("scope_not_found", "Scope no longer exists"))?;
+    validate_scope_target(&scope, &input.target)?;
+    let Some(active) = ledger
+        .active_preview(&input.target.id)
+        .map_err(|_| AppError::new("storage_error", "Target release state could not be loaded"))?
+    else {
+        return Ok(None);
+    };
+    match load_active_plan(
+        sources,
+        scopes,
+        changes,
+        ledger,
+        &input.target,
+        active.clone(),
+    ) {
+        Ok(plan) => Ok(Some(plan)),
+        Err(error) if error.code == "release_preview_invalidated" => {
+            ledger
+                .invalidate_preview(&active.id, &error.code)
+                .map_err(|_| {
+                    AppError::new(
+                        "storage_error",
+                        "Stale release preview could not be cleared",
+                    )
+                })?;
+            Ok(None)
+        }
+        Err(error) => Err(error),
+    }
+}
+
+fn load_active_plan(
+    sources: &SourceRepository,
+    scopes: &ScopeRepository,
+    changes: &ChangeRepository,
+    ledger: &LedgerRepository,
+    target: &Target,
+    active: LedgerBatch,
+) -> AppResult<ReleasePlan> {
+    let active_scope = scopes
+        .get(&active.scope_id)
+        .map_err(|_| AppError::new("storage_error", "Active preview scope could not be loaded"))?
+        .ok_or_else(|| {
+            AppError::new(
+                "release_preview_invalidated",
+                "The active preview scope no longer exists",
+            )
+        })?;
+    validate_scope_target(&active_scope, target)?;
+    let source = sources
+        .get(&active_scope.source_id)
+        .map_err(|_| AppError::new("storage_error", "Source could not be loaded"))?
+        .ok_or_else(|| AppError::new("source_not_found", "Source no longer exists"))?;
+    validate_publishable_source(&source)?;
+    let checkout = Checkout::acquire(target).map_err(checkout_error)?;
+    let available = changes
+        .list(&active_scope.id)
+        .map_err(|_| AppError::new("storage_error", "Changes could not be loaded"))?;
+    let selected = select_pending_changes(&available, &active.change_ids)?;
+    let live_selected = selected
+        .iter()
+        .filter(|change| !matches!(change.kind, ChangeKind::Deleted))
+        .cloned()
+        .collect::<Vec<_>>();
+    let mut files = build_file_set(&source.path, target, &live_selected)?;
+    let operations = ledger
+        .load_operations(&active.id)
+        .map_err(|_| AppError::new("storage_error", "Release preview could not be validated"))?;
+    if operations.is_empty() {
+        return Err(AppError::new(
+            "release_preview_invalidated",
+            "The stored release preview is incomplete",
+        ));
+    }
+    append_frozen_deletes(&mut files, &operations)?;
+    validate_frozen_operations(checkout.root(), &files, &operations)?;
+
+    ReleasePlan::new(
+        active.id.clone(),
+        ReleaseBatch {
+            id: active.id,
+            scope_id: active.scope_id,
+            target_id: active.target_id,
+            change_ids: active.change_ids,
+        },
+        false,
+        &files,
+        checkout.root(),
+    )
+}
+
 pub fn execute(
     sources: &SourceRepository,
     scopes: &ScopeRepository,
@@ -645,10 +752,9 @@ pub(crate) fn checkout_error(error: crate::workspace::CheckoutError) -> AppError
             "workspace_busy",
             "Another target operation is already running",
         ),
-        crate::workspace::CheckoutError::Synchronization => AppError::new(
-            "workspace_needs_recovery",
-            "The GitHub repository changed in a way easyBlog cannot update safely",
-        ),
+        crate::workspace::CheckoutError::Synchronization(reason) => {
+            AppError::new("workspace_needs_recovery", reason.user_message())
+        }
         crate::workspace::CheckoutError::TimedOut => AppError::new(
             "git_timeout",
             "GitHub synchronization timed out. Check your network and try again.",
@@ -822,11 +928,13 @@ mod tests {
     }
 
     #[test]
-    fn resumes_an_unchanged_active_preview() {
+    fn restores_an_unchanged_active_preview_and_clears_a_stale_one() {
         let root = std::env::temp_dir().join(format!("easyblog-preview-{}", uuid::Uuid::new_v4()));
         let source_root = root.join("source");
+        let second_source_root = root.join("second-source");
         let target_root = root.join("target");
         fs::create_dir_all(&source_root).unwrap();
+        fs::create_dir_all(&second_source_root).unwrap();
         fs::create_dir_all(target_root.join("_posts")).unwrap();
         fs::create_dir_all(target_root.join("assets/easyblog")).unwrap();
         fs::write(source_root.join("hello.md"), "# Hello\n").unwrap();
@@ -873,6 +981,15 @@ mod tests {
                 created_at: "now".into(),
             })
             .unwrap();
+        sources
+            .insert(&Source {
+                id: "second-source".into(),
+                path: second_source_root.to_string_lossy().into_owned(),
+                name: "Other content".into(),
+                r#type: "local_directory".into(),
+                created_at: "now".into(),
+            })
+            .unwrap();
         scopes
             .save(
                 &Scope {
@@ -880,6 +997,24 @@ mod tests {
                     source_id: "source".into(),
                     target_id: Some("target".into()),
                     name: "Posts".into(),
+                    lifecycle: ScopeLifecycle::Active,
+                    revision: 1,
+                    selections: vec![],
+                    include_patterns: vec![],
+                    exclude_patterns: vec![],
+                    created_at: "now".into(),
+                    updated_at: "now".into(),
+                },
+                None,
+            )
+            .unwrap();
+        scopes
+            .save(
+                &Scope {
+                    id: "second-scope".into(),
+                    source_id: "second-source".into(),
+                    target_id: Some("target".into()),
+                    name: "Other posts".into(),
                     lifecycle: ScopeLifecycle::Active,
                     revision: 1,
                     selections: vec![],
@@ -916,10 +1051,37 @@ mod tests {
             change_ids: vec!["change".into()],
         };
         let first = execute(&sources, &scopes, &changes, &ledger, input()).unwrap();
-        let second = execute(&sources, &scopes, &changes, &ledger, input()).unwrap();
+        let second = load_active(
+            &sources,
+            &scopes,
+            &changes,
+            &ledger,
+            ActivePreviewInput {
+                scope_id: "second-scope".into(),
+                target: target.clone(),
+            },
+        )
+        .unwrap()
+        .unwrap();
 
         assert_eq!(second.batch.id, first.batch.id);
+        assert_eq!(second.batch.scope_id, "scope");
         assert_eq!(second.diffs, first.diffs);
+
+        fs::write(source_root.join("hello.md"), "# Hello, revised\n").unwrap();
+        let stale = load_active(
+            &sources,
+            &scopes,
+            &changes,
+            &ledger,
+            ActivePreviewInput {
+                scope_id: "second-scope".into(),
+                target,
+            },
+        )
+        .unwrap();
+        assert!(stale.is_none());
+        assert!(ledger.active_preview("target").unwrap().is_none());
 
         drop(targets);
         drop(ledger);

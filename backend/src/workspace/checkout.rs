@@ -1,6 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use crate::{
+    diagnostics::{logging, redaction},
     providers::git::{GitCommandError, GitCommands, GitOutput},
     targets::{check, Target, TargetCheck, TargetState},
     workspace::{
@@ -15,7 +16,91 @@ pub enum CheckoutError {
     Lock(FileLockError),
     WorkingTree(WorkingTreeError),
     TimedOut,
-    Synchronization,
+    Synchronization(SynchronizationError),
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum SynchronizationError {
+    GitUnavailable,
+    GitCommandFailed {
+        arguments: Vec<String>,
+        stderr: String,
+    },
+    UnexpectedBranch {
+        expected: String,
+        actual: String,
+    },
+    UnexpectedHead {
+        expected: String,
+        actual: String,
+    },
+    Diverged {
+        local_ahead: u32,
+        remote_ahead: u32,
+    },
+    InvalidRelation {
+        output: String,
+    },
+    UnexpectedPendingCommit {
+        expected_parent: String,
+        remote_head: String,
+    },
+}
+
+impl SynchronizationError {
+    pub fn user_message(&self) -> String {
+        match self {
+            Self::GitUnavailable => "Git could not be started while synchronizing the target".into(),
+            Self::GitCommandFailed { arguments, stderr } => git_command_message(arguments, stderr),
+            Self::UnexpectedBranch { expected, actual } => format!(
+                "The target workspace is on branch \"{actual}\" instead of configured branch \"{expected}\""
+            ),
+            Self::UnexpectedHead { .. } => {
+                "The release preview no longer matches the current target commit".into()
+            }
+            Self::Diverged {
+                local_ahead,
+                remote_ahead,
+            } => format!(
+                "The target branch differs from GitHub (local ahead: {local_ahead}, remote ahead: {remote_ahead})"
+            ),
+            Self::InvalidRelation { .. } => {
+                "Git returned an invalid branch comparison result. Check the easyBlog log for details.".into()
+            }
+            Self::UnexpectedPendingCommit { .. } => {
+                "The pending release commit is not based on the current GitHub branch".into()
+            }
+        }
+    }
+}
+
+fn git_command_message(arguments: &[String], stderr: &str) -> String {
+    let command = arguments.join(" ");
+    let detail = redaction::redact(stderr);
+    if detail.contains("Failed to connect to github.com port 443") {
+        return "Could not connect to GitHub (github.com:443 timed out). Check your network or proxy, then retry.".into();
+    }
+    if detail.contains("Authentication failed") || detail.contains("could not read Username") {
+        return "GitHub authentication failed while synchronizing the target. Reconnect GitHub, then retry.".into();
+    }
+    let detail = detail
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+        .unwrap_or("Git returned no error details");
+    format!(
+        "Git command \"{command}\" failed: {}",
+        truncate_detail(detail)
+    )
+}
+
+fn truncate_detail(detail: &str) -> &str {
+    const MAX_DETAIL_LENGTH: usize = 240;
+    if detail.len() <= MAX_DETAIL_LENGTH {
+        detail
+    } else {
+        &detail[..MAX_DETAIL_LENGTH]
+    }
 }
 
 pub struct Checkout {
@@ -71,53 +156,116 @@ fn synchronize_pending_push(
     default_branch: &str,
     expected_commit: &str,
 ) -> Result<(), CheckoutError> {
+    logging::info(
+        "git-sync",
+        format!(
+            "workspace={} operation=pending-push-sync default_branch={} expected_commit={}",
+            root.display(),
+            default_branch,
+            expected_commit
+        ),
+    );
     run(root, &["fetch", "--prune", "origin"])?;
-    let current_branch = run(root, &["branch", "--show-current"])?;
-    if String::from_utf8_lossy(&current_branch.stdout).trim() != default_branch {
-        return Err(CheckoutError::Synchronization);
+    let current_branch = output_text(run(root, &["branch", "--show-current"])?);
+    if current_branch != default_branch {
+        return Err(synchronization_failure(
+            root,
+            SynchronizationError::UnexpectedBranch {
+                expected: default_branch.into(),
+                actual: display_branch(&current_branch),
+            },
+        ));
     }
-    let head = run(root, &["rev-parse", "HEAD"])?;
-    if String::from_utf8_lossy(&head.stdout).trim() != expected_commit {
-        return Err(CheckoutError::Synchronization);
+    let head = output_text(run(root, &["rev-parse", "HEAD"])?);
+    if head != expected_commit {
+        return Err(synchronization_failure(
+            root,
+            SynchronizationError::UnexpectedHead {
+                expected: expected_commit.into(),
+                actual: head,
+            },
+        ));
     }
     let remote_branch = format!("origin/{default_branch}");
     let range = format!("HEAD...{remote_branch}");
-    let relation = run(root, &["rev-list", "--left-right", "--count", &range])?;
-    let counts = String::from_utf8_lossy(&relation.stdout)
-        .split_whitespace()
-        .map(str::parse::<u32>)
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|_| CheckoutError::Synchronization)?;
+    let relation = output_text(run(root, &["rev-list", "--left-right", "--count", &range])?);
+    let counts = parse_relation(root, &relation)?;
+    logging::info(
+        "git-sync",
+        format!(
+            "workspace={} operation=pending-push-sync local_ahead={} remote_ahead={}",
+            root.display(),
+            counts[0],
+            counts[1]
+        ),
+    );
     if counts == [0, 0] {
         return Ok(());
     }
     if counts != [1, 0] {
-        return Err(CheckoutError::Synchronization);
+        return Err(synchronization_failure(
+            root,
+            SynchronizationError::Diverged {
+                local_ahead: counts[0],
+                remote_ahead: counts[1],
+            },
+        ));
     }
-    let parent = run(root, &["rev-parse", "HEAD^"])?;
-    let remote = run(root, &["rev-parse", &remote_branch])?;
-    if parent.stdout != remote.stdout {
-        return Err(CheckoutError::Synchronization);
+    let parent = output_text(run(root, &["rev-parse", "HEAD^"])?);
+    let remote = output_text(run(root, &["rev-parse", &remote_branch])?);
+    if parent != remote {
+        return Err(synchronization_failure(
+            root,
+            SynchronizationError::UnexpectedPendingCommit {
+                expected_parent: parent,
+                remote_head: remote,
+            },
+        ));
     }
     Ok(())
 }
 
 fn synchronize(root: &Path, default_branch: &str) -> Result<(), CheckoutError> {
+    logging::info(
+        "git-sync",
+        format!(
+            "workspace={} operation=sync default_branch={}",
+            root.display(),
+            default_branch
+        ),
+    );
     run(root, &["fetch", "--prune", "origin"])?;
-    let current_branch = run(root, &["branch", "--show-current"])?;
-    if String::from_utf8_lossy(&current_branch.stdout).trim() != default_branch {
-        return Err(CheckoutError::Synchronization);
+    let current_branch = output_text(run(root, &["branch", "--show-current"])?);
+    if current_branch != default_branch {
+        return Err(synchronization_failure(
+            root,
+            SynchronizationError::UnexpectedBranch {
+                expected: default_branch.into(),
+                actual: display_branch(&current_branch),
+            },
+        ));
     }
     let remote_branch = format!("origin/{default_branch}");
     let range = format!("HEAD...{remote_branch}");
-    let relation = run(root, &["rev-list", "--left-right", "--count", &range])?;
-    let counts = String::from_utf8_lossy(&relation.stdout)
-        .split_whitespace()
-        .map(str::parse::<u32>)
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|_| CheckoutError::Synchronization)?;
-    if counts.len() != 2 || counts[0] > 0 {
-        return Err(CheckoutError::Synchronization);
+    let relation = output_text(run(root, &["rev-list", "--left-right", "--count", &range])?);
+    let counts = parse_relation(root, &relation)?;
+    logging::info(
+        "git-sync",
+        format!(
+            "workspace={} operation=sync local_ahead={} remote_ahead={}",
+            root.display(),
+            counts[0],
+            counts[1]
+        ),
+    );
+    if counts[0] > 0 {
+        return Err(synchronization_failure(
+            root,
+            SynchronizationError::Diverged {
+                local_ahead: counts[0],
+                remote_ahead: counts[1],
+            },
+        ));
     }
     if counts[1] > 0 {
         run(root, &["merge", "--ff-only", &remote_branch])?;
@@ -128,9 +276,52 @@ fn synchronize(root: &Path, default_branch: &str) -> Result<(), CheckoutError> {
 fn run(root: &Path, arguments: &[&str]) -> Result<GitOutput, CheckoutError> {
     let output = GitCommands::run(root, arguments).map_err(|error| match error {
         GitCommandError::TimedOut => CheckoutError::TimedOut,
-        _ => CheckoutError::Synchronization,
+        GitCommandError::Unavailable => {
+            synchronization_failure(root, SynchronizationError::GitUnavailable)
+        }
+        GitCommandError::Failed { arguments, stderr } => synchronization_failure(
+            root,
+            SynchronizationError::GitCommandFailed { arguments, stderr },
+        ),
     })?;
     Ok(output)
+}
+
+fn parse_relation(root: &Path, output: &str) -> Result<Vec<u32>, CheckoutError> {
+    let counts = output
+        .split_whitespace()
+        .map(str::parse::<u32>)
+        .collect::<Result<Vec<_>, _>>();
+    match counts {
+        Ok(counts) if counts.len() == 2 => Ok(counts),
+        _ => Err(synchronization_failure(
+            root,
+            SynchronizationError::InvalidRelation {
+                output: output.into(),
+            },
+        )),
+    }
+}
+
+fn output_text(output: GitOutput) -> String {
+    String::from_utf8_lossy(&output.stdout).trim().into()
+}
+
+fn display_branch(branch: &str) -> String {
+    if branch.is_empty() {
+        "<detached HEAD>".into()
+    } else {
+        branch.into()
+    }
+}
+
+fn synchronization_failure(root: &Path, error: SynchronizationError) -> CheckoutError {
+    let details = redaction::redact(&format!(
+        "workspace={} synchronization_error={error:?}",
+        root.display()
+    ));
+    logging::error("git-sync", details);
+    CheckoutError::Synchronization(error)
 }
 
 #[cfg(test)]
@@ -212,7 +403,9 @@ mod tests {
 
         assert!(matches!(
             Checkout::acquire(&target),
-            Err(CheckoutError::Synchronization)
+            Err(CheckoutError::Synchronization(
+                SynchronizationError::UnexpectedBranch { .. }
+            ))
         ));
 
         fs::remove_dir_all(root).unwrap();
@@ -306,7 +499,9 @@ mod tests {
         drop(pending);
         assert!(matches!(
             Checkout::acquire_pending_push(&target, "not-the-commit"),
-            Err(CheckoutError::Synchronization)
+            Err(CheckoutError::Synchronization(
+                SynchronizationError::UnexpectedHead { .. }
+            ))
         ));
         fs::remove_dir_all(root).unwrap();
     }
