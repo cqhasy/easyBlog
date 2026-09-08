@@ -12,6 +12,8 @@ pub enum FileChangeKind {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct FileDiff {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub change_id: Option<String>,
     #[serde(serialize_with = "serialize_git_path")]
     pub path: PathBuf,
     pub kind: FileChangeKind,
@@ -42,7 +44,12 @@ impl Diff {
         } else {
             unified_patch(&path, before, after)
         };
-        FileDiff { path, kind, patch }
+        FileDiff {
+            change_id: None,
+            path,
+            kind,
+            patch,
+        }
     }
 }
 

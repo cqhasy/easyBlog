@@ -56,7 +56,7 @@ export interface ReleaseBatch {
   change_ids: ChangeId[];
 }
 export type FileChangeKind = "added" | "modified" | "deleted" | "unchanged";
-export interface FileDiff { path: string; kind: FileChangeKind; patch: string; }
+export interface FileDiff { change_id?: ChangeId; path: string; kind: FileChangeKind; patch: string; }
 export interface ReleasePlan {
   preview_id: string;
   batch: ReleaseBatch;
@@ -70,6 +70,14 @@ export interface Publication {
   published_at: string;
 }
 export type PublicationState = "pending_push" | "published" | "rollback_pending" | "rolled_back" | "recovery_required" | "legacy";
+export type PublicationObjectKind = "article" | "resource";
+export type PublicationChangeKind = "added" | "updated" | "deleted";
+export interface PublicationOperation {
+  target_path: string;
+  object_kind: PublicationObjectKind;
+  change_kind: PublicationChangeKind;
+  display_name: string;
+}
 export interface PublicationRecord {
   batch_id: ReleaseBatchId;
   commit_sha: string;
@@ -82,6 +90,7 @@ export interface PublicationRecord {
   rolled_back_at: string | null;
   rollback_available?: boolean;
   recovery_reason?: string | null;
+  operations: PublicationOperation[] | null;
 }
 
 export interface Source {

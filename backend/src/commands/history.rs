@@ -3,6 +3,7 @@ use crate::{
     app::state::AppState,
     releases::BatchState,
     shared::errors::{AppError, AppResult},
+    storage::ledger::HistoryOperation,
 };
 use serde::{Deserialize, Serialize};
 use tauri::State;
@@ -22,22 +23,29 @@ pub fn list_publications(state: State<'_, AppState>) -> AppResult<Vec<HistoryRec
                 .map_err(|_| {
                     AppError::new("storage_error", "Release history could not be loaded")
                 })?;
-            let (state, recovery_reason, rollback_available) = match batch {
-                Some(batch) => history_status(
-                    batch.state,
-                    batch.failure_code,
-                    !state
+            let (state, recovery_reason, rollback_available, operations) = match batch {
+                Some(batch) if batch.state == BatchState::Legacy => (
+                    "legacy",
+                    Some("This older publication has no immutable operation ledger.".into()),
+                    false,
+                    None,
+                ),
+                Some(batch) => {
+                    let operations = state
                         .ledger
-                        .load_operations(&publication.batch_id)
+                        .load_history_operations(&publication.batch_id)
                         .map_err(|_| {
                             AppError::new("storage_error", "Release history could not be loaded")
-                        })?
-                        .is_empty(),
-                ),
+                        })?;
+                    let (state, recovery_reason, rollback_available) =
+                        history_status(batch.state, batch.failure_code, !operations.is_empty());
+                    (state, recovery_reason, rollback_available, Some(operations))
+                }
                 None => (
                     "legacy",
                     Some("This older publication has no immutable operation ledger.".into()),
                     false,
+                    None,
                 ),
             };
             Ok(HistoryRecord {
@@ -52,6 +60,7 @@ pub fn list_publications(state: State<'_, AppState>) -> AppResult<Vec<HistoryRec
                 rolled_back_at: publication.rolled_back_at,
                 rollback_available,
                 recovery_reason,
+                operations,
             })
         })
         .collect()
@@ -70,6 +79,7 @@ pub struct HistoryRecord {
     pub rolled_back_at: Option<String>,
     pub rollback_available: bool,
     pub recovery_reason: Option<String>,
+    pub operations: Option<Vec<HistoryOperation>>,
 }
 
 fn history_status(
