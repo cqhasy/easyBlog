@@ -19,6 +19,15 @@ describe("app view state", () => {
     } as unknown as AppView)).toBe("dashboard");
   });
 
+  it("keeps Dashboard active while a focused review route is open", () => {
+    expect(pageForNavigation({
+      page: "review",
+      scopeId: "scope-1",
+      selectedChangeIds: ["change-1"],
+      activeChangeId: "change-1",
+    } as unknown as AppView)).toBe("dashboard");
+  });
+
   it("collapses the sidebar for narrow desktop widths without changing preference", () => {
     expect(resolveSidebarMode("expanded", 1200)).toBe("expanded");
     expect(resolveSidebarMode("expanded", 960)).toBe("collapsed");

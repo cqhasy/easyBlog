@@ -5,6 +5,7 @@ import type { GithubAuthorization, GithubLoginProgress } from "../contracts";
 import { renderAccount } from "../features/account";
 import { mountDashboard } from "../features/dashboard";
 import { mountChanges } from "../features/changes";
+import { mountChangeReview } from "../features/changes/review";
 import { mountHistory } from "../features/history";
 import { renderSettings } from "../features/settings";
 import { mountSources } from "../features/sources";
@@ -112,7 +113,11 @@ export function createAppController(
     }
     if (view.page === "changes") {
       mountChanges(content, undefined, {
-        openReview: () => undefined,
+        openReview: (context) => {
+          if (!isCurrentPage()) return;
+          viewState.navigate({ page: "review", ...context });
+          render();
+        },
         openSources: () => {
           if (!isCurrentPage()) return;
           viewState.navigate({ page: "sources" });
@@ -124,6 +129,21 @@ export function createAppController(
           render();
         },
       }, { scopeId: view.scopeId }, hydrateIcons);
+      return;
+    }
+    if (view.page === "review") {
+      mountChangeReview(content, undefined, view, {
+        backToChanges: (context) => {
+          if (!isCurrentPage()) return;
+          viewState.navigate({ page: "changes", ...context });
+          render();
+        },
+        openSources: () => {
+          if (!isCurrentPage()) return;
+          viewState.navigate({ page: "sources" });
+          render();
+        },
+      }, hydrateIcons);
       return;
     }
     if (view.page === "history") {
