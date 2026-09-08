@@ -591,4 +591,11 @@ mod tests {
         assert!(Checkout::acquire_pending_push(&target, &expected).is_ok());
         fs::remove_dir_all(root).unwrap();
     }
+
+    #[test]
+    fn truncates_error_detail_without_splitting_utf8_characters() {
+        let detail = format!("{}中", "a".repeat(239));
+
+        assert_eq!(truncate_detail(&detail), "a".repeat(239));
+    }
 }

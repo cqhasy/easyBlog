@@ -162,6 +162,35 @@ describe("focused change review", () => {
     expect(html).toContain("文件差异");
   });
 
+  it("keeps patch content that begins with a file-header prefix after a hunk starts", () => {
+    const preview = {
+      ...plan("batch-1"),
+      diffs: [{ change_id: "a", path: "docs/features/a.md", kind: "modified", patch: "--- a/docs/features/a.md\n+++ b/docs/features/a.md\n@@ -1,2 +1,2 @@\n---- removed\n++++ added" }],
+    } as unknown as ReleasePlan;
+
+    const html = renderChangeReview({ status: "preview", scope, selectedChanges: [change("updated", "a")], activeChangeId: "a", plan: preview, target });
+
+    expect(html).toContain("--- removed");
+    expect(html).toContain("+++ added");
+    expect(html).toContain(">1</span><span class=\"review-diff-number\" aria-hidden=\"true\"></span>");
+    expect(html).toContain("><\/span><span class=\"review-diff-number\" aria-hidden=\"true\">2</span>");
+  });
+
+  it("renders only diffs owned by the active change when target paths share a basename", () => {
+    const preview = {
+      ...plan("batch-1"),
+      diffs: [
+        { change_id: "other", path: "posts/archive/a.md", kind: "modified", patch: "@@ -1 +1 @@\n-wrong\n+wrong target" },
+        { change_id: "a", path: "posts/current/a.md", kind: "modified", patch: "@@ -1 +1 @@\n-right\n+owned target" },
+      ],
+    } as unknown as ReleasePlan;
+
+    const html = renderChangeReview({ status: "preview", scope, selectedChanges: [change("updated", "a")], activeChangeId: "a", plan: preview, target });
+
+    expect(html).toContain("owned target");
+    expect(html).not.toContain("wrong target");
+  });
+
   it("gives every review state a unique Chinese labeled page region", () => {
     const states: Array<[ReviewState, string]> = [
       [{ status: "loading" }, "review-loading-title"],

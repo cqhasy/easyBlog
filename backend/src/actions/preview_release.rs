@@ -1051,6 +1051,20 @@ mod tests {
             change_ids: vec!["change".into()],
         };
         let first = execute(&sources, &scopes, &changes, &ledger, input()).unwrap();
+        let mut recovering_target = target.clone();
+        recovering_target.state = TargetState::NeedsRecovery;
+        let recovery_error = load_active(
+            &sources,
+            &scopes,
+            &changes,
+            &ledger,
+            ActivePreviewInput {
+                scope_id: "second-scope".into(),
+                target: recovering_target,
+            },
+        )
+        .unwrap_err();
+        assert_eq!(recovery_error.code, "target_needs_configuration");
         let second = load_active(
             &sources,
             &scopes,
