@@ -63,10 +63,39 @@ class TestFormElement {
   constructor(readonly id: string) {}
 }
 
+class TestDialogElement {
+  open = false;
+  private cancelHandler: ((event: Event) => void) | undefined;
+
+  addEventListener(type: string, listener: EventListenerOrEventListenerObject): void {
+    if (type === "cancel" && typeof listener === "function") {
+      this.cancelHandler = listener;
+    }
+  }
+
+  showModal(): void {
+    this.open = true;
+  }
+
+  cancel(): void {
+    this.cancelHandler?.({ preventDefault: vi.fn() } as unknown as Event);
+  }
+}
+
 class SourcesDomRoot {
-  innerHTML = "";
+  private html = "";
+  private dialog: TestDialogElement | undefined;
   private submitHandler: ((event: SubmitEvent) => void) | undefined;
   private clickHandler: ((event: MouseEvent) => void) | undefined;
+
+  get innerHTML(): string {
+    return this.html;
+  }
+
+  set innerHTML(value: string) {
+    this.html = value;
+    this.dialog = value.includes("data-resource-action-dialog") ? new TestDialogElement() : undefined;
+  }
 
   addEventListener(type: string, listener: EventListenerOrEventListenerObject): void {
     if (type === "submit" && typeof listener === "function") {
@@ -93,6 +122,15 @@ class SourcesDomRoot {
       target: form,
       preventDefault: vi.fn(),
     } as unknown as SubmitEvent);
+  }
+
+  querySelector(selector: string): TestDialogElement | null {
+    return selector === "[data-resource-action-dialog]" ? this.dialog ?? null : null;
+  }
+
+  cancelDialog(): void {
+    expect(this.dialog).toBeDefined();
+    this.dialog?.cancel();
   }
 }
 
@@ -371,6 +409,22 @@ describe("sources feature", () => {
     expect(html).toContain('data-lucide="git-branch"');
     expect(html).not.toContain('data-lucide="github"');
     expect(html).not.toContain(">重新加载</button>");
+  });
+
+  it("closes the action dialog when its non-bubbling cancel event fires", async () => {
+    vi.stubGlobal("HTMLFormElement", TestFormElement);
+    const root = new SourcesDomRoot();
+    mountSources(root as unknown as HTMLElement, {
+      listSources: vi.fn().mockResolvedValue([]),
+    });
+    await flushDomUpdates();
+
+    root.clickAction("add-source");
+    expect(root.innerHTML).toContain('data-resource-action-dialog');
+
+    root.cancelDialog();
+
+    expect(root.innerHTML).not.toContain('data-resource-action-dialog');
   });
 
   it("uses the compact sources header action hierarchy", () => {

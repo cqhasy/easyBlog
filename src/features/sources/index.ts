@@ -404,6 +404,12 @@ export function mountSources(
     root.innerHTML = renderResources(state, category, selectedResourceId, panel, repositories, selectedRepository, message, loadingRepositories);
     hydrate();
     const dialog = root.querySelector?.("[data-resource-action-dialog]") as HTMLDialogElement | null | undefined;
+    dialog?.addEventListener("cancel", (event) => {
+      event.preventDefault();
+      panel = undefined;
+      message = "";
+      render();
+    });
     if (dialog && !dialog.open) {
       if (typeof dialog.showModal === "function") {
         try {
@@ -502,14 +508,6 @@ export function mountSources(
   root.addEventListener("change", (event) => {
     const input = event.target;
     if (input instanceof HTMLSelectElement && input.name === "repository") selectedRepository = input.value;
-  });
-  root.addEventListener("cancel", (event) => {
-    const dialog = event.target;
-    if (!(dialog instanceof HTMLDialogElement) || !dialog.hasAttribute("data-resource-action-dialog")) return;
-    event.preventDefault();
-    panel = undefined;
-    message = "";
-    render();
   });
   root.addEventListener("click", (event) => {
     const target = (event.target as HTMLElement).closest<HTMLElement>("[data-action]");
