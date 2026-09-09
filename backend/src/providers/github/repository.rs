@@ -1,6 +1,6 @@
-use std::process::Command;
-
 use serde::{Deserialize, Serialize};
+
+use crate::shared::process::hidden_command;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GithubRepository {
@@ -31,7 +31,7 @@ struct ApiPermissions {
 }
 
 pub fn list_pushable() -> Result<Vec<GithubRepository>, GithubRepositoryError> {
-    let output = Command::new("gh")
+    let output = hidden_command("gh")
         .args([
             "api",
             "--paginate",

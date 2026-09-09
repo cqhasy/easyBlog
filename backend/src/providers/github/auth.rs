@@ -1,10 +1,12 @@
 use std::{
     io,
-    process::{Child, Command, Stdio},
+    process::{Child, Stdio},
     sync::{mpsc, Mutex, OnceLock},
     thread,
     time::Duration,
 };
+
+use crate::shared::process::hidden_command;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum GithubAuthStatus {
@@ -50,7 +52,8 @@ struct SystemGithubLoginLauncher {
 
 impl GithubLoginLauncher for SystemGithubLoginLauncher {
     fn launch(&self, arguments: &[&str]) -> io::Result<String> {
-        let mut child = Command::new("gh")
+        let mut command = hidden_command("gh");
+        let mut child = command
             .args(arguments)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -95,12 +98,12 @@ impl GithubBrowserLauncher for SystemGithubBrowserLauncher {
 
         #[cfg(target_os = "macos")]
         {
-            return Command::new("open").arg(url).spawn().map(|_child| ());
+            return hidden_command("open").arg(url).spawn().map(|_child| ());
         }
 
         #[cfg(all(unix, not(target_os = "macos")))]
         {
-            return Command::new("xdg-open").arg(url).spawn().map(|_child| ());
+            return hidden_command("xdg-open").arg(url).spawn().map(|_child| ());
         }
 
         #[cfg(not(any(target_os = "windows", unix)))]
@@ -166,7 +169,7 @@ pub struct GithubAuth;
 
 impl GithubAuth {
     pub fn status() -> GithubAuthStatus {
-        let output = match Command::new("gh")
+        let output = match hidden_command("gh")
             .args(["auth", "status", "--hostname", "github.com"])
             .output()
         {
@@ -209,7 +212,7 @@ impl GithubAuth {
     }
 
     pub fn setup_git_credentials() -> Result<(), GithubAuthError> {
-        let status = Command::new("gh")
+        let status = hidden_command("gh")
             .args(["auth", "setup-git", "--hostname", "github.com"])
             .status()
             .map_err(|error| {

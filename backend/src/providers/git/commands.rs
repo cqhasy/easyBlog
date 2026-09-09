@@ -6,6 +6,8 @@ use std::{
     time::{Duration, Instant},
 };
 
+use crate::shared::process::hidden_command;
+
 #[cfg(unix)]
 use std::os::unix::process::CommandExt;
 
@@ -31,7 +33,7 @@ pub struct GitCommands;
 
 impl GitCommands {
     pub fn run(root: &Path, arguments: &[&str]) -> Result<GitOutput, GitCommandError> {
-        let mut command = Command::new("git");
+        let mut command = hidden_command("git");
         command.args(arguments).current_dir(root);
         let output = run_with_timeout(&mut command, MANAGED_GIT_TIMEOUT)?;
         let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
@@ -52,7 +54,7 @@ impl GitCommands {
     }
 
     pub fn run_output(root: &Path, arguments: &[&str]) -> Result<Output, GitCommandError> {
-        let mut command = Command::new("git");
+        let mut command = hidden_command("git");
         command.args(arguments).current_dir(root);
         run_with_timeout(&mut command, MANAGED_GIT_TIMEOUT)
     }
@@ -121,7 +123,7 @@ fn configure_process_tree(command: &mut Command) {
 }
 
 #[cfg(not(unix))]
-fn configure_process_tree(_: &mut Command) {}
+fn configure_process_tree(_: &mut std::process::Command) {}
 
 #[cfg(unix)]
 fn terminate_process_tree(child: &mut std::process::Child) {
@@ -134,7 +136,8 @@ fn terminate_process_tree(child: &mut std::process::Child) {
 
 #[cfg(windows)]
 fn terminate_process_tree(child: &mut std::process::Child) {
-    let _ = Command::new("taskkill")
+    let mut command = hidden_command("taskkill");
+    let _ = command
         .args(["/PID", &child.id().to_string(), "/T", "/F"])
         .stdout(Stdio::null())
         .stderr(Stdio::null())
