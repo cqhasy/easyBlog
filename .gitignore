@@ -4,3 +4,4 @@ backend/target/
 backend/gen/
 .superpowers/
 .chrome-check*/
+./superpowers/
