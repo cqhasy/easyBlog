@@ -116,6 +116,7 @@ describe("source and target editors", () => {
     const html = renderSourceEditor(editorState);
 
     expect(html).toContain('data-action="back-to-sources"');
+    expect(html).toContain('data-lucide="arrow-left"');
     expect(html).toContain('data-action="cancel-edit"');
     expect(html).toContain('type="submit"');
     expect(html).toContain("<details");
@@ -154,6 +155,29 @@ describe("source and target editors", () => {
       .toContain('class="editor-operation" role="status" aria-live="polite">正在保存同步范围...</p>');
     expect(renderTargetEditor({ ...initialTargetEditorState, saving: true }))
       .toContain('class="editor-operation" role="status" aria-live="polite">正在保存发布目标...</p>');
+  });
+
+  it("hydrates icons after each focused editor renders", async () => {
+    const sourceRoot = new EditorDomRoot();
+    const targetRoot = new EditorDomRoot();
+    const hydrate = vi.fn();
+
+    mountSourceEditor(sourceRoot as unknown as HTMLElement, {
+      listSources: async () => [source],
+      listScopes: async () => [],
+      listTargets: async () => [],
+      getSourceChildren: async () => [],
+    }, source.id, undefined, { backToSources: vi.fn() }, undefined, hydrate);
+    mountTargetEditor(targetRoot as unknown as HTMLElement, {
+      listSources: async () => [],
+      listTargets: async () => [target],
+      inspectTargetConfiguration: async () => [],
+    }, target.id, { backToSources: vi.fn() }, undefined, hydrate);
+
+    await flushDomUpdates();
+    await flushDomUpdates();
+
+    expect(hydrate).toHaveBeenCalled();
   });
 
   it("does not leave the selected page after an inactive source-editor save completes", async () => {

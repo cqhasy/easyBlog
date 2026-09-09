@@ -12,7 +12,11 @@ import {
   renderResourceOverview,
   renderResources,
   renderSources,
+  resourcesFor,
+  resourcesForCategory,
   scopeLabel,
+  sourceStatusLabel,
+  targetStatusLabel,
 } from "./index";
 
 const source: Source = {
@@ -41,6 +45,20 @@ const summary: ScopeSummary = {
   diagnostics: [],
 };
 
+function connectedTarget(overrides: Partial<ConnectedTarget> = {}): ConnectedTarget {
+  return {
+    id: "target-1",
+    name: "Blog",
+    repository: "owner/blog",
+    default_branch: "main",
+    visibility: "public",
+    state: "needs_configuration",
+    layout: { posts_directory: "", resources_directory: "" },
+    created_at: source.created_at,
+    ...overrides,
+  };
+}
+
 class TestFormElement {
   constructor(readonly id: string) {}
 }
@@ -59,10 +77,10 @@ class SourcesDomRoot {
     }
   }
 
-  clickAction(action: string): void {
+  clickAction(action: string, dataset: Record<string, string> = {}): void {
     expect(this.innerHTML).toContain(`data-action="${action}"`);
     const target = {
-      dataset: { action },
+      dataset: { action, ...dataset },
       closest: <T extends HTMLElement>(selector: string): T | null =>
         selector === "[data-action]" ? target as unknown as T : null,
     };
@@ -144,6 +162,28 @@ describe("sources feature", () => {
     };
 
     expect(scopeLabel(summary)).toBe("已阻塞");
+  });
+
+  it("summarizes source state from its scopes", () => {
+    expect(sourceStatusLabel([])).toBe("未配置");
+    expect(sourceStatusLabel([summary])).toBe("可用");
+    expect(sourceStatusLabel([{ ...summary, health: "needs_target" }])).toBe("待绑定目标");
+    expect(sourceStatusLabel([{ ...summary, health: "blocked" }])).toBe("已阻塞");
+    expect(sourceStatusLabel([{ ...summary, scope: { ...summary.scope, lifecycle: "paused" } }])).toBe("已暂停");
+    expect(sourceStatusLabel([{ ...summary, scope: { ...summary.scope, lifecycle: "deleted" } }])).toBe("未配置");
+  });
+
+  it("labels connected target states", () => {
+    expect(targetStatusLabel(connectedTarget({ state: "ready" }))).toBe("可用");
+    expect(targetStatusLabel(connectedTarget({ state: "needs_configuration" }))).toBe("待配置");
+    expect(targetStatusLabel(connectedTarget({ state: "needs_reconnect" }))).toBe("需要重新连接");
+    expect(targetStatusLabel(connectedTarget({ state: "needs_recovery" }))).toBe("需要修复");
+  });
+
+  it("filters resource relationships by the active category", () => {
+    const resources = resourcesFor([source], [summary], [connectedTarget()]);
+    expect(resourcesForCategory(resources, "sources").every((item) => item.kind === "source")).toBe(true);
+    expect(resourcesForCategory(resources, "targets").every((item) => item.kind === "target")).toBe(true);
   });
 
   it("reloads the persisted list after adding a source", async () => {
@@ -230,11 +270,110 @@ describe("sources feature", () => {
   });
 
   it("renders an actionable target-empty state", () => {
-    expect(renderResources({ status: "ready", sources: [source], targets: [] }))
+    expect(renderResources({ status: "ready", sources: [source], scopes: [], targets: [] }))
       .toContain('data-action="connect-target"');
   });
 
-  it("uses Chinese resource copy and blue-gray primary actions in the overview", () => {
+  it("renders source and target tabs with only the active category in the master list", () => {
+    const target = connectedTarget();
+    const html = renderResources({
+      status: "ready",
+      sources: [source],
+      scopes: [summary],
+      targets: [target],
+    });
+
+    expect(html).toContain('role="tablist"');
+    expect(html).toContain('role="tab" aria-selected="true" data-action="select-category" data-category="sources"');
+    expect(html).toContain('role="tab" aria-selected="false" data-action="select-category" data-category="targets"');
+    expect(html).toContain("Content");
+    expect(html).toContain("owner/blog");
+
+    const targetHtml = renderResources(
+      { status: "ready", sources: [source], scopes: [summary], targets: [target] },
+      "targets",
+    );
+    expect(targetHtml).toContain("owner/blog");
+    expect(targetHtml).not.toContain('data-action="select-resource" data-resource-id="source-1"');
+  });
+
+  it("renders source detail with range binding and a new-range action", () => {
+    const target = connectedTarget({ state: "ready" });
+    const html = renderResources(
+      { status: "ready", sources: [source], scopes: [summary], targets: [target] },
+      "sources",
+      source.id,
+    );
+    expect(html).toContain("同步范围");
+    expect(html).toContain("Posts");
+    expect(html).toContain("owner/blog");
+    expect(html).toContain("同步状态");
+    expect(html).toContain("编辑来源");
+    expect(html).toContain('data-scope-id="scope-1"');
+  });
+
+  it("renders target detail without an inline editor", () => {
+    const target = connectedTarget();
+    const html = renderResources(
+      { status: "ready", sources: [source], scopes: [summary], targets: [target] },
+      "targets",
+      target.id,
+    );
+    expect(html).toContain("GitHub 目标");
+    expect(html).toContain("owner/blog");
+    expect(html).toContain("发布配置");
+    expect(html).toContain('data-action="edit-target"');
+    expect(html).not.toContain('id="target-editor-form"');
+  });
+
+  it("keeps setup actions available when the selected category is empty", () => {
+    const html = renderResources({ status: "ready", sources: [source], scopes: [], targets: [] }, "targets");
+    expect(html).toContain("尚未连接发布目标");
+    expect(html).toContain('data-action="connect-target"');
+    expect(html).not.toContain("<strong>Content</strong>");
+  });
+
+  it("renders the global empty state with both setup paths", () => {
+    const html = renderResources({ status: "empty" });
+    expect(html).toContain('data-action="add-source"');
+    expect(html).toContain('data-action="connect-target"');
+    expect(html).toContain("从一个内容来源开始");
+  });
+
+  it("renders source setup in a modal dialog with icon controls", () => {
+    const html = renderResources({ status: "empty" }, "sources", undefined, "add-source");
+
+    expect(html).toContain('<dialog class="resource-action-dialog" data-resource-action-dialog');
+    expect(html).toContain('id="add-source-form"');
+    expect(html).toContain('data-action="close-resource-action"');
+    expect(html).toContain('data-lucide="x"');
+    expect(html).not.toContain('class="resource-action-panel"');
+  });
+
+  it("renders target setup with a refresh icon instead of a secondary text button", () => {
+    const html = renderResources(
+      { status: "empty" },
+      "sources",
+      undefined,
+      "connect-target",
+      [{
+        repository: "owner/blog",
+        default_branch: "main",
+        visibility: "public",
+        description: null,
+      }],
+      "owner/blog",
+    );
+
+    expect(html).toContain('<dialog class="resource-action-dialog" data-resource-action-dialog');
+    expect(html).toContain('data-action="refresh-repositories"');
+    expect(html).toContain('data-lucide="refresh-cw"');
+    expect(html).toContain('data-lucide="git-branch"');
+    expect(html).not.toContain('data-lucide="github"');
+    expect(html).not.toContain(">重新加载</button>");
+  });
+
+  it("uses the compact sources header action hierarchy", () => {
     const html = renderResources({
       status: "ready",
       sources: [source],
@@ -245,14 +384,32 @@ describe("sources feature", () => {
     expect(html).toContain('<p class="eyebrow">内容资源</p>');
     expect(html).not.toContain("EASYBLOG / SOURCES");
     expect(html).toContain('<section class="resource-overview-region" aria-label="资源详情">');
-    expect(html).toContain('class="task-primary-button" data-action="add-source"');
-    expect(html).toContain('class="task-primary-button" data-action="connect-target"');
+    expect(html).toContain('class="task-primary-button resource-add-button" data-action="add-source"');
+    expect(html).toContain('class="secondary-button resource-connect-button" data-action="connect-target"');
     expect(renderResourceOverview({
       kind: "source",
       id: source.id,
       source,
       scopes: [summary],
-    })).toContain('class="task-primary-button" data-action="edit-source"');
+    })).toContain('class="secondary-button resource-edit-source-button" data-action="edit-source"');
+  });
+
+  it("matches the confirmed wireframe hierarchy in the master-detail list", () => {
+    const html = renderResources({
+      status: "ready",
+      sources: [source],
+      scopes: [summary],
+      targets: [],
+    });
+
+    expect(html).toContain('class="resource-list-icon"');
+    expect(html).toContain('data-lucide="folder-open"');
+    expect(html).toContain('<strong class="resource-list-name">Content</strong>');
+    expect(html).toContain('<span class="resource-list-meta">本地目录 · 1 个同步范围</span>');
+    expect(html).toContain('<span class="resource-list-path">C:/content</span>');
+    expect(html).toContain('class="resource-list-state source-state-ready"');
+    expect(html).not.toContain('name="resource-search"');
+    expect(html).toContain('class="resource-scope-target"');
   });
 
   it("labels loading, error, and ready resource regions from the same page heading", () => {
@@ -267,6 +424,72 @@ describe("sources feature", () => {
       expect(html).toContain('<h1 id="sources-title">内容来源</h1>');
       expect(html).not.toContain("<main");
     }
+  });
+
+  it("switches category and never leaves source detail beside the target list", async () => {
+    const target = connectedTarget();
+    const root = new SourcesDomRoot();
+    mountSources(root as unknown as HTMLElement, {
+      listSources: vi.fn().mockResolvedValue([source]),
+      listScopes: vi.fn().mockResolvedValue([summary]),
+      listTargets: vi.fn().mockResolvedValue([target]),
+    });
+
+    await flushDomUpdates();
+    root.clickAction("select-category", { category: "targets" });
+
+    expect(root.innerHTML).toContain("owner/blog");
+    expect(root.innerHTML).not.toContain("范围与绑定");
+    expect(root.innerHTML).toContain("GitHub 目标");
+  });
+
+  it("selects the first target after entering the target tab when no target was selected", async () => {
+    const target = connectedTarget();
+    const root = new SourcesDomRoot();
+    mountSources(root as unknown as HTMLElement, {
+      listSources: vi.fn().mockResolvedValue([source]),
+      listScopes: vi.fn().mockResolvedValue([summary]),
+      listTargets: vi.fn().mockResolvedValue([target]),
+    });
+
+    await flushDomUpdates();
+    root.clickAction("select-category", { category: "targets" });
+
+    expect(root.innerHTML).toContain(`data-resource-id="${target.id}" aria-current="true"`);
+  });
+
+  it("opens the source and target focused editors from the selected category", async () => {
+    const target = connectedTarget();
+    const root = new SourcesDomRoot();
+    const openSourceEditor = vi.fn();
+    const openTargetEditor = vi.fn();
+    mountSources(root as unknown as HTMLElement, {
+      listSources: vi.fn().mockResolvedValue([source]),
+      listScopes: vi.fn().mockResolvedValue([summary]),
+      listTargets: vi.fn().mockResolvedValue([target]),
+    }, { openSourceEditor, openTargetEditor });
+
+    await flushDomUpdates();
+    root.clickAction("edit-source", { sourceId: source.id });
+    expect(openSourceEditor).toHaveBeenCalledWith(source.id, undefined);
+
+    root.clickAction("select-category", { category: "targets" });
+    root.clickAction("edit-target", { targetId: target.id });
+    expect(openTargetEditor).toHaveBeenCalledWith(target.id);
+  });
+
+  it("hydrates Lucide icons after rendering Sources", async () => {
+    const root = new SourcesDomRoot();
+    const hydrate = vi.fn();
+    mountSources(root as unknown as HTMLElement, {
+      listSources: vi.fn().mockResolvedValue([source]),
+      listScopes: vi.fn().mockResolvedValue([summary]),
+      listTargets: vi.fn().mockResolvedValue([]),
+    }, undefined, undefined, undefined, hydrate);
+
+    await flushDomUpdates();
+
+    expect(hydrate).toHaveBeenCalled();
   });
 
   it("does not open a connected target after the Sources mount is no longer active", async () => {
