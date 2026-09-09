@@ -167,7 +167,7 @@ export function createAppController(
           viewState.navigate({ page: "target-editor", targetId });
           render();
         },
-      }, sourcesResourceId, isCurrentPage);
+      }, sourcesResourceId, isCurrentPage, hydrateIcons);
       return;
     }
     if (view.page === "source-editor") {
@@ -178,7 +178,7 @@ export function createAppController(
           viewState.navigate({ page: "sources" });
           render();
         },
-      }, isCurrentPage);
+      }, isCurrentPage, hydrateIcons);
       return;
     }
     if (view.page === "target-editor") {
@@ -189,7 +189,7 @@ export function createAppController(
           viewState.navigate({ page: "sources" });
           render();
         },
-      }, isCurrentPage);
+      }, isCurrentPage, hydrateIcons);
       return;
     }
     if (view.page === "settings") {
