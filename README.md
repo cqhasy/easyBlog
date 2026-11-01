@@ -29,6 +29,26 @@ easyBlog 是一个本地优先的桌面博客发布工具。它读取本地目�
 
 Windows 还需要 Microsoft Edge WebView2；Windows 10 1803 及更高版本通常已自带。macOS 开发环境需要 Xcode Command Line Tools。
 
+### macOS
+
+支持 macOS 12.3 及以上版本，可分别为 Apple Silicon（M 系列）和 Intel Mac 构建。应用使用系统 WKWebView，前端构建目标包含 Safari 15.4。
+
+准备开发环境（已安装 Homebrew 时）：
+
+```bash
+xcode-select --install
+brew install node rustup git gh
+rustup-init
+```
+
+`rustup-init` 使用默认稳定工具链即可，完成后按提示重新打开终端。已安装的工具可跳过；Xcode Command Line Tools 也无需重复安装。
+
+在项目根目录运行 `npm ci`，再运行 `npm run tauri:dev` 即可启动。该命令会自动启动 Vite，并固定使用 5173 端口；端口被占用时需先释放。
+
+添加内容来源时使用绝对路径，例如 `/Users/you/Documents/blog`。若系统询问是否允许访问“文稿”“桌面”等目录，请允许访问所选来源目录。
+
+从 Finder 或 Dock 启动打包应用时，easyBlog 会在继承的 PATH 后补充 Apple Silicon Homebrew 的 `/opt/homebrew/bin`、Intel Homebrew 的 `/usr/local/bin` 等标准目录，供 Git、GitHub CLI 和 Git 凭据助手使用。自定义安装位置仍需在启动应用的环境中配置 PATH。
+
 检查主要工具是否可用：
 
 ```bash
@@ -186,7 +206,22 @@ cargo fmt --manifest-path backend/Cargo.toml --all -- --check
 npm run tauri:build
 ```
 
-当前 `backend/tauri.conf.json` 中的 `bundle.active` 为 `false`，因此 `tauri:build` 只构建应用，不生成平台安装包。
+构建命令会先自动构建前端。macOS 会自动合并 `backend/tauri.macos.conf.json`，生成 `.app` 和 `.dmg`，输出在 `backend/target/release/bundle/` 中；其他平台仍只构建可执行文件。
+
+macOS 默认构建当前机器架构，也可以显式选择架构或生成通用应用：
+
+```bash
+# 仅生成当前架构的 .app（无需创建磁盘映像）
+npm run tauri:build -- --bundles app
+
+# 同时安装两个架构的 Rust 标准库后构建 Universal 应用
+rustup target add aarch64-apple-darwin x86_64-apple-darwin
+npm run tauri:build -- --target universal-apple-darwin
+```
+
+`.app` 可以复制到“应用程序”目录。当前未配置 Developer ID 签名与公证，生成的包用于本地开发和测试，向其他用户分发前需完成签名与公证配置。
+
+`.github/workflows/macos.yml` 会运行前端测试和 macOS 后端测试，并分别构建 Apple Silicon、Intel 的 `.app`。工作流产物用于验证构建，不是已签名的正式发行包。
 
 ## 相关文档
 

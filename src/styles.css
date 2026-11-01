@@ -21,7 +21,7 @@
   --nav-radius: 12px;
   background: var(--canvas);
   color: var(--text);
-  font-family: Inter, "Segoe UI Variable", "Segoe UI", "Microsoft YaHei UI", "PingFang SC", "Noto Sans SC", sans-serif;
+  font-family: -apple-system, BlinkMacSystemFont, Inter, "Segoe UI Variable", "Segoe UI", "Microsoft YaHei UI", "PingFang SC", "Noto Sans SC", sans-serif;
   font-synthesis: none;
 }
 
@@ -90,6 +90,7 @@ button:active { transform: translateY(1px); }
   display: grid;
   gap: 8px;
   grid-template-columns: 192px minmax(0, 1fr);
+  height: 100vh;
   height: 100dvh;
   min-height: 0;
   overflow: hidden;
@@ -470,7 +471,7 @@ button:active { transform: translateY(1px); }
 .workbench-facts dt { color: var(--muted); font-size: 11px; margin-bottom: 7px; }
 .workbench-facts dd { font-size: 13px; font-weight: 650; margin: 0; overflow-wrap: anywhere; }
 .workbench-activity { border-bottom: 1px solid var(--border); padding: 22px 0; }
-.workbench-activity p:last-child { color: var(--muted); font-family: "Cascadia Mono", Consolas, monospace; font-size: 12px; margin: 0; overflow-wrap: anywhere; }
+.workbench-activity p:last-child { color: var(--muted); font-family: ui-monospace, SFMono-Regular, Menlo, "Cascadia Mono", Consolas, monospace; font-size: 12px; margin: 0; overflow-wrap: anywhere; }
 .workbench-loading { color: var(--muted); font-size: 13px; padding: 50px 0; }
 
 /* changes and review */
@@ -539,13 +540,13 @@ button:active { transform: translateY(1px); }
 .review-header .back-button:hover { background: var(--surface-muted); border-color: var(--border); color: var(--text); }
 .review-header h1 { font-size: 17px; line-height: 1.25; margin: 0; }
 .review-crumb { color: var(--muted); font-size: 11px; font-weight: 700; margin: 0 0 4px; }
-.review-position { color: var(--muted); font-family: "Cascadia Mono", Consolas, monospace; font-size: 11px; white-space: nowrap; }
+.review-position { color: var(--muted); font-family: ui-monospace, SFMono-Regular, Menlo, "Cascadia Mono", Consolas, monospace; font-size: 11px; white-space: nowrap; }
 .review-layout { display: grid; grid-template-columns: 244px minmax(0, 1fr); min-height: 0; overflow: hidden; }
 .review-sequence { background: #fafaf8; border-right: 1px solid var(--border); min-height: 0; overflow-y: auto; padding: 20px 12px; }
 .review-sequence header { display: grid; gap: 12px; margin: 0 8px 12px; }
 .review-sequence header > div { align-items: baseline; display: flex; justify-content: space-between; }
 .review-sequence header strong { font-family: "Segoe UI Variable", "Microsoft YaHei UI", "PingFang SC", sans-serif; font-size: 13px; font-weight: 700; }
-.review-sequence header > div span { color: var(--muted); font-family: "Cascadia Mono", Consolas, monospace; font-size: 10px; }
+.review-sequence header > div span { color: var(--muted); font-family: ui-monospace, SFMono-Regular, Menlo, "Cascadia Mono", Consolas, monospace; font-size: 10px; }
 .review-search { position: relative; }
 .review-search svg { color: var(--muted); height: 14px; left: 9px; pointer-events: none; position: absolute; top: 10px; width: 14px; }
 .review-sequence input { background: var(--surface); border-color: #d5d5d1; font-size: 11px; min-height: 34px; padding: 0 9px 0 29px; width: 100%; }
@@ -602,7 +603,7 @@ button:active { transform: translateY(1px); }
 .review-loading, .review-recovery, .review-published { color: var(--muted); margin: 0 auto; max-width: 620px; padding-top: 110px; }
 .review-recovery h1, .review-published h1 { font-size: 24px; }
 .review-recovery p, .review-published p { font-size: 13px; line-height: 1.55; }
-.review-published code, .history-dialog code { background: var(--accent-soft); color: var(--accent-strong); font-family: "Cascadia Mono", Consolas, monospace; font-size: 11px; padding: 2px 4px; }
+.review-published code, .history-dialog code { background: var(--accent-soft); color: var(--accent-strong); font-family: ui-monospace, SFMono-Regular, Menlo, "Cascadia Mono", Consolas, monospace; font-size: 11px; padding: 2px 4px; }
 
 /* sources and editors */
 .resource-page { display: flex; flex-direction: column; height: 100%; margin: 0 auto; max-width: 1440px; padding: 42px clamp(32px, 4vw, 72px) 72px; width: 100%; }
@@ -673,7 +674,7 @@ button:active { transform: translateY(1px); }
 .resource-list-name { color: var(--text); font-size: 13px; font-weight: 680; line-height: 1.35; min-width: 0; overflow-wrap: anywhere; }
 .resource-list-meta, .resource-list-path { color: var(--muted); font-size: 10px; line-height: 1.35; min-width: 0; overflow-wrap: anywhere; }
 .resource-list-meta { grid-column: 2 / -1; }
-.resource-list-path { font-family: "Cascadia Mono", Consolas, monospace; font-size: 10px; grid-column: 2 / -1; }
+.resource-list-path { font-family: ui-monospace, SFMono-Regular, Menlo, "Cascadia Mono", Consolas, monospace; font-size: 10px; grid-column: 2 / -1; }
 .resource-list-state {
   align-self: start;
   border: 1px solid currentColor;
@@ -701,7 +702,7 @@ button:active { transform: translateY(1px); }
 .resource-edit-source-button svg { height: 14px; stroke-width: 2; width: 14px; }
 .resource-overview h2 { color: var(--text); font-size: 24px; font-weight: 680; line-height: 1.25; margin: 0 0 5px; overflow-wrap: anywhere; }
 .resource-overview-header .eyebrow { color: var(--text); font-size: 11px; letter-spacing: 0; margin-bottom: 5px; }
-.resource-overview-header p:not(.eyebrow) { color: var(--muted); font-family: "Cascadia Mono", Consolas, monospace; font-size: 11px; line-height: 1.45; margin: 0; overflow-wrap: anywhere; }
+.resource-overview-header p:not(.eyebrow) { color: var(--muted); font-family: ui-monospace, SFMono-Regular, Menlo, "Cascadia Mono", Consolas, monospace; font-size: 11px; line-height: 1.45; margin: 0; overflow-wrap: anywhere; }
 .resource-facts { border-bottom: 1px solid var(--border); display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); margin: 0; }
 .resource-facts-source { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .resource-facts div { min-width: 0; padding: 14px 0 13px; }
@@ -733,7 +734,7 @@ button:active { transform: translateY(1px); }
 .resource-summary-list strong { color: var(--text); font-size: 13px; font-weight: 680; line-height: 1.35; overflow-wrap: anywhere; }
 .resource-summary-list small, .resource-note, .resource-empty { color: var(--muted); font-size: 11px; line-height: 1.45; margin: 0; }
 .resource-scope-destination { display: grid; gap: 3px; justify-items: start; min-width: 0; }
-.resource-scope-target { align-items: center; color: var(--text); display: inline-flex; font-family: "Cascadia Mono", Consolas, monospace; font-size: 11px; gap: 5px; min-width: 0; overflow-wrap: anywhere; }
+.resource-scope-target { align-items: center; color: var(--text); display: inline-flex; font-family: ui-monospace, SFMono-Regular, Menlo, "Cascadia Mono", Consolas, monospace; font-size: 11px; gap: 5px; min-width: 0; overflow-wrap: anywhere; }
 .resource-scope-target svg { flex: 0 0 auto; height: 13px; stroke-width: 2; width: 13px; }
 .resource-scope-state { font-size: 10px; line-height: 1.3; }
 .resource-edit-button { border-color: transparent; color: var(--muted); height: 32px; min-height: 32px; padding: 0; width: 32px; }
@@ -843,9 +844,9 @@ dialog.resource-action-dialog::backdrop { background: #18181b66; }
 .initialization-preview { background: var(--warning-soft); border-left: 3px solid var(--warning); color: #6b4a1d; margin-top: 20px; padding: 15px; }
 .initialization-preview h2 { font-size: 14px; margin: 0 0 7px; }
 .initialization-preview p { font-size: 12px; margin: 0; }
-.initialization-preview ul { font-family: "Cascadia Mono", Consolas, monospace; font-size: 11px; margin: 12px 0; padding-left: 18px; }
-.initialization-preview .editor-overflow { display: inline-block; }
-.initialization-preview .danger-button { margin-top: 10px; }
+.initialization-preview ul { font-family: ui-monospace, SFMono-Regular, Menlo, "Cascadia Mono", Consolas, monospace; font-size: 11px; margin: 12px 0; padding-left: 18px; }
+.initialization-actions { display: flex; justify-content: flex-start; margin-top: 14px; }
+.initialization-actions .danger-button { min-width: 112px; }
 .editor-action-row { align-items: center; background: transparent; border-top: 1px solid var(--border); display: flex; gap: 16px; justify-content: space-between; margin-top: 10px; min-height: 52px; padding: 12px 0 0; }
 .editor-action-row > span { color: var(--muted); font-size: 11px; }
 .editor-overflow > button { display: block; margin-top: 10px; }

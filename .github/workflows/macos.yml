@@ -1,0 +1,50 @@
+name: macOS
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: macOS (${{ matrix.target }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            target: aarch64-apple-darwin
+          - runner: macos-15-intel
+            target: x86_64-apple-darwin
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+          components: rustfmt
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: backend
+          key: ${{ matrix.target }}
+      - run: npm ci
+      - run: npm test
+      - run: cargo fmt --manifest-path backend/Cargo.toml --all -- --check
+      - name: Run backend tests
+        run: cargo test --locked --manifest-path backend/Cargo.toml
+      - name: Build macOS application
+        run: npm run tauri:build -- --target ${{ matrix.target }} --bundles app
+      - name: Archive the application with executable permissions
+        run: ditto -c -k --sequesterRsrc --keepParent backend/target/${{ matrix.target }}/release/bundle/macos/easyBlog.app easyBlog-${{ matrix.target }}.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: easyBlog-${{ matrix.target }}
+          path: easyBlog-${{ matrix.target }}.zip
+          if-no-files-found: error

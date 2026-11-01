@@ -36,6 +36,7 @@ export type TargetEditorState = {
   initialization?: { files: string[] };
   dirty: boolean;
   saving: boolean;
+  initializing?: boolean;
   error?: string;
 };
 
@@ -152,10 +153,10 @@ export function renderTargetEditor(editor: TargetEditorState): string {
     : `<option value="${editor.form.adapter}">${adapterLabel(editor.form.adapter)}</option>`;
   const disabled = editor.saving ? "disabled" : "";
   const operation = editor.saving
-    ? '<p class="editor-operation" role="status" aria-live="polite">正在保存发布目标...</p>'
+    ? `<p class="editor-operation" role="status" aria-live="polite">${editor.initializing ? "正在初始化发布目录..." : "正在保存发布目标..."}</p>`
     : "";
   const initialization = editor.initialization
-    ? `<section class="initialization-preview" aria-labelledby="initialization-title"><h2 id="initialization-title">确认初始化</h2><p>将仅创建以下目录和配置文件：</p><ul>${editor.initialization.files.map((file) => `<li>${escapeHtml(file)}</li>`).join("")}</ul><details class="editor-overflow"><summary>初始化操作</summary><button type="button" class="danger-button" data-action="confirm-target-initialization" ${disabled}>确认创建</button></details></section>`
+    ? `<section class="initialization-preview" aria-labelledby="initialization-title"><h2 id="initialization-title">确认初始化</h2><p>将仅创建以下目录和配置文件：</p><ul>${editor.initialization.files.map((file) => `<li>${escapeHtml(file)}</li>`).join("")}</ul><div class="initialization-actions"><button type="button" class="danger-button" data-action="confirm-target-initialization" ${disabled}>${editor.initializing ? "正在初始化..." : "确认创建"}</button></div></section>`
     : "";
   return `<section class="focused-editor-page target-focused-editor" aria-labelledby="target-editor-title"><header class="focused-editor-header"><button type="button" class="back-button" data-action="back-to-sources" aria-label="返回内容来源" title="返回内容来源"><i data-lucide="arrow-left"></i></button><div><p class="eyebrow">GitHub 目标</p><h1 id="target-editor-title">编辑发布目标</h1><p>${escapeHtml(editor.target.repository)} · ${targetStatus(editor.target)}</p></div></header><form id="target-editor-form" class="focused-editor-form"><section class="editor-section"><label>发布适配器<select name="adapter" ${disabled}>${adapterOptions}</select></label><p class="target-candidate-reason">${escapeHtml(selectedCandidate?.reason ?? "正在检查仓库布局...")}</p></section><section class="editor-section editor-fields"><label>文章目录<input name="posts-directory" required value="${escapeHtml(editor.form.postsDirectory)}" ${disabled} /></label><label>资源目录<input name="resources-directory" required value="${escapeHtml(editor.form.resourcesDirectory)}" ${disabled} /></label></section>${editor.error ? `<p class="editor-error" role="alert">${escapeHtml(editor.error)}</p>` : ""}${initialization}<footer class="editor-action-row"><span>保存后会先检查是否需要初始化目录。</span>${operation}<div class="editor-actions"><button type="button" class="secondary-button" data-action="cancel-edit" ${disabled}>取消</button><button type="submit" class="task-primary-button" ${disabled}>${editor.saving ? "正在保存..." : "保存"}</button></div></footer></form></section>`;
 }
@@ -447,9 +448,12 @@ export function mountTargetEditor(
     }
     if (!editor) return;
     if (action === "confirm-target-initialization" && api.initializeTarget && editor.initialization) {
-      if (!window.confirm("确认创建预览中的发布目录和配置文件吗？")) return;
+      if (!isActive() || editor.saving) return;
+      // The preview and this button are the confirmation. WKWebView may cancel
+      // window.confirm() without displaying a dialog.
       const activeEditor = editor;
       activeEditor.saving = true;
+      activeEditor.initializing = true;
       activeEditor.error = undefined;
       render();
       void api.initializeTarget(activeEditor.target.id).then((saved) => {
@@ -458,6 +462,7 @@ export function mountTargetEditor(
       }).catch((error) => {
         if (!isActive() || editor !== activeEditor) return;
         activeEditor.saving = false;
+        activeEditor.initializing = false;
         activeEditor.error = errorMessage(error, "发布目录无法初始化");
         render();
       });

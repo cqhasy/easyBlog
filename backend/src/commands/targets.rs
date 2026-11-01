@@ -123,7 +123,7 @@ pub fn preview_target_initialization(
 }
 
 #[tauri::command]
-pub fn initialize_target(
+pub async fn initialize_target(
     state: State<'_, AppState>,
     target_id: String,
     confirmed: bool,
@@ -134,7 +134,22 @@ pub fn initialize_target(
             "Confirm the initialization preview before writing publishing files",
         ));
     }
-    actions::configure_target::initialize(&state.targets, &target_id)
+    let targets = state.targets.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        actions::configure_target::initialize(&targets, &target_id).inspect_err(|error| {
+            crate::diagnostics::logging::error(
+                "target-initialization",
+                format!("failed target_id={target_id} code={}", error.code),
+            );
+        })
+    })
+    .await
+    .map_err(|_| {
+        AppError::new(
+            "target_initialization_failed",
+            "Publishing target initialization stopped unexpectedly",
+        )
+    })?
 }
 
 fn repository_error(error: GithubRepositoryError) -> AppError {

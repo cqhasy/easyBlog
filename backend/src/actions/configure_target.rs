@@ -7,6 +7,7 @@ use std::{
 use serde::Serialize;
 
 use crate::{
+    diagnostics::logging,
     shared::errors::{AppError, AppResult},
     storage::targets::{ConnectedTarget, TargetRepository},
     targets::{PagesLayout, PublishingAdapter, TargetCheck, TargetState},
@@ -122,6 +123,10 @@ pub fn preview_initialization(
 }
 
 pub fn initialize(targets: &TargetRepository, target_id: &str) -> AppResult<ConnectedTarget> {
+    logging::info(
+        "target-initialization",
+        format!("start target_id={target_id}"),
+    );
     let mut target = load(targets, target_id)?;
     validate_workspace(&target)?;
     let _lock = FileLock::acquire(target.target.path()).map_err(|_| {
@@ -139,6 +144,13 @@ pub fn initialize(targets: &TargetRepository, target_id: &str) -> AppResult<Conn
     validate_paths(&target.target.layout)?;
     WorkingTree::require_clean(target.target.path())
         .map_err(|_| AppError::new("workspace_dirty", "The target workspace has external edits"))?;
+    logging::info(
+        "target-initialization",
+        format!(
+            "workspace-clean target_id={target_id} path={}",
+            target.target.path().display()
+        ),
+    );
     create_safe_directory(
         target.target.path(),
         &target.target.layout.posts_directory,
@@ -169,6 +181,10 @@ pub fn initialize(targets: &TargetRepository, target_id: &str) -> AppResult<Conn
     targets
         .update(&target)
         .map_err(|_| AppError::new("storage_error", "Publishing target could not be saved"))?;
+    logging::info(
+        "target-initialization",
+        format!("complete target_id={target_id}"),
+    );
     Ok(target)
 }
 
@@ -428,6 +444,53 @@ mod tests {
         drop(targets);
         fs::remove_dir_all(root).unwrap();
         fs::remove_file(database).unwrap();
+    }
+
+    #[test]
+    fn initializes_only_the_missing_astro_resource_directory() {
+        let root =
+            std::env::temp_dir().join(format!("easyblog astro workspace {}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(root.join("src/content/posts")).unwrap();
+        fs::write(root.join("src/content/posts/existing.md"), "# Existing\n").unwrap();
+        git(&root, &["init"]);
+        git(&root, &["add", "."]);
+        git(
+            &root,
+            &[
+                "-c",
+                "user.name=Test",
+                "-c",
+                "user.email=test@example.com",
+                "commit",
+                "-m",
+                "Initial",
+            ],
+        );
+        let targets = TargetRepository::open(":memory:").unwrap();
+        let mut target = connected(&root);
+        target.target.adapter = Some(PublishingAdapter::AstroContent);
+        target.target.layout = PublishingAdapter::AstroContent.default_layout();
+        targets.insert(&target).unwrap();
+
+        assert_eq!(
+            preview_initialization(&targets, "target-1").unwrap().files,
+            vec!["src/assets/easyblog"]
+        );
+        assert_eq!(
+            initialize(&targets, "target-1").unwrap().target.state,
+            TargetState::Ready
+        );
+        assert!(root.join("src/assets/easyblog").is_dir());
+        assert_eq!(
+            targets.get("target-1").unwrap().unwrap().target.state,
+            TargetState::Ready
+        );
+        assert_eq!(
+            fs::read_to_string(root.join("src/content/posts/existing.md")).unwrap(),
+            "# Existing\n"
+        );
+        assert!(WorkingTree::require_clean(&root).is_ok());
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

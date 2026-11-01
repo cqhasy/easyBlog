@@ -155,6 +155,8 @@ describe("source and target editors", () => {
       .toContain('class="editor-operation" role="status" aria-live="polite">正在保存同步范围...</p>');
     expect(renderTargetEditor({ ...initialTargetEditorState, saving: true }))
       .toContain('class="editor-operation" role="status" aria-live="polite">正在保存发布目标...</p>');
+    expect(renderTargetEditor({ ...initialTargetEditorState, saving: true, initializing: true }))
+      .toContain('class="editor-operation" role="status" aria-live="polite">正在初始化发布目录...</p>');
   });
 
   it("hydrates icons after each focused editor renders", async () => {
@@ -225,10 +227,11 @@ describe("source and target editors", () => {
     expect(backToSources).not.toHaveBeenCalled();
   });
 
-  it("does not leave the selected page after an inactive target initialization completes", async () => {
+  it.each([true, false])("initializes without a browser confirmation and respects page activity (%s)", async (remainActive) => {
     vi.stubGlobal("HTMLFormElement", TestFormElement);
     vi.stubGlobal("FormData", TestFormData);
-    vi.stubGlobal("window", { confirm: vi.fn(() => true) });
+    const confirm = vi.fn(() => false);
+    vi.stubGlobal("window", { confirm });
     const root = new EditorDomRoot();
     const backToSources = vi.fn();
     let active = true;
@@ -264,11 +267,51 @@ describe("source and target editors", () => {
     await flushDomUpdates();
     await flushDomUpdates();
     root.clickAction("confirm-target-initialization");
-    active = false;
+    expect(root.innerHTML).toContain("正在初始化...");
+    root.clickAction("confirm-target-initialization");
+    expect(confirm).not.toHaveBeenCalled();
+    expect(initializeTarget).toHaveBeenCalledExactlyOnceWith(target.id);
+    active = remainActive;
     resolveInitialization(target);
     await flushDomUpdates();
 
     expect(initializeTarget).toHaveBeenCalledOnce();
+    if (remainActive) expect(backToSources).toHaveBeenCalledExactlyOnceWith(target.id);
+    else expect(backToSources).not.toHaveBeenCalled();
+  });
+
+  it("shows initialization errors and allows retrying the same preview", async () => {
+    vi.stubGlobal("HTMLFormElement", TestFormElement);
+    vi.stubGlobal("FormData", TestFormData);
+    vi.stubGlobal("window", { confirm: vi.fn(() => false) });
+    const root = new EditorDomRoot();
+    const backToSources = vi.fn();
+    const initializeTarget = vi.fn()
+      .mockRejectedValueOnce({ message: "目录没有写入权限" })
+      .mockResolvedValueOnce({ ...target, state: "ready" });
+    mountTargetEditor(root as unknown as HTMLElement, {
+      listSources: async () => [],
+      listTargets: async () => [target],
+      inspectTargetConfiguration: async () => [],
+      saveTargetConfiguration: async () => target,
+      previewTargetInitialization: async () => ({ target_id: target.id, files: ["src/assets/easyblog"] }),
+      initializeTarget,
+    }, target.id, { backToSources });
+    await flushDomUpdates();
+    root.submit("target-editor-form", {
+      adapter: "astro_content",
+      "posts-directory": "src/content/posts",
+      "resources-directory": "src/assets/easyblog",
+    });
+    await flushDomUpdates();
+    root.clickAction("confirm-target-initialization");
+    await flushDomUpdates();
+    expect(root.innerHTML).toContain("目录没有写入权限");
+    expect(root.innerHTML).not.toContain("正在初始化...");
     expect(backToSources).not.toHaveBeenCalled();
+    root.clickAction("confirm-target-initialization");
+    await flushDomUpdates();
+    expect(initializeTarget).toHaveBeenCalledTimes(2);
+    expect(backToSources).toHaveBeenCalledExactlyOnceWith(target.id);
   });
 });
