@@ -142,6 +142,7 @@ pub fn initialize(targets: &TargetRepository, target_id: &str) -> AppResult<Conn
         )
     })?;
     validate_paths(&target.target.layout)?;
+    validate_initialization_paths(&target.target, &adapter)?;
     WorkingTree::require_clean(target.target.path())
         .map_err(|_| AppError::new("workspace_dirty", "The target workspace has external edits"))?;
     logging::info(
@@ -212,19 +213,31 @@ fn safe_path(root: &Path, relative: &Path) -> AppResult<PathBuf> {
             unreachable!()
         };
         current.push(component);
-        if current.exists()
-            && fs::symlink_metadata(&current)
-                .map_err(|_| initialization_error())?
-                .file_type()
-                .is_symlink()
-        {
-            return Err(AppError::new(
-                "unsafe_workspace_path",
-                "Publishing paths cannot traverse symbolic links",
-            ));
+        match fs::symlink_metadata(&current) {
+            Ok(metadata) if metadata.file_type().is_symlink() => {
+                return Err(AppError::new(
+                    "unsafe_workspace_path",
+                    "Publishing paths cannot traverse symbolic links",
+                ));
+            }
+            Ok(_) => {}
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(_) => return Err(initialization_error()),
         }
     }
     Ok(output)
+}
+
+fn validate_initialization_paths(
+    target: &crate::targets::Target,
+    adapter: &PublishingAdapter,
+) -> AppResult<()> {
+    safe_path(target.path(), &target.layout.posts_directory)?;
+    safe_path(target.path(), &target.layout.resources_directory)?;
+    if let Some(path) = adapter.configuration_path() {
+        safe_path(target.path(), Path::new(path))?;
+    }
+    Ok(())
 }
 
 fn create_safe_directory(root: &Path, relative: &Path, label: &str) -> AppResult<()> {
@@ -613,10 +626,32 @@ mod tests {
         let error = initialize(&targets, "target-1").unwrap_err();
         assert_eq!(error.code, "unsafe_workspace_path");
         assert!(!outside.join("posts").exists());
+        assert!(!root.join("assets").exists());
+        assert!(!root.join(".github").exists());
 
         drop(targets);
         fs::remove_dir_all(root).unwrap();
         fs::remove_dir_all(outside).unwrap();
         fs::remove_file(database).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rejects_dangling_symbolic_links_in_initialization_paths() {
+        use std::os::unix::fs::symlink;
+
+        let root = std::env::temp_dir().join(format!(
+            "easyblog-configure-target-{}",
+            uuid::Uuid::new_v4()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        symlink(root.join("missing"), root.join("linked")).unwrap();
+
+        for path in ["linked", "linked/posts"] {
+            let error = safe_path(&root, Path::new(path)).unwrap_err();
+            assert_eq!(error.code, "unsafe_workspace_path");
+        }
+        assert!(!root.join("missing").exists());
+        fs::remove_dir_all(root).unwrap();
     }
 }

@@ -66,7 +66,8 @@ mod tests {
         std::fs::remove_dir_all(directory).unwrap();
     }
 
-    #[cfg(unix)]
+    // macOS filesystems reject these invalid UTF-8 names with EILSEQ.
+    #[cfg(all(unix, not(target_os = "macos")))]
     #[test]
     fn distinguishes_non_utf8_canonical_workspace_paths() {
         use std::os::unix::ffi::OsStringExt;
