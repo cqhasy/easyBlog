@@ -63,11 +63,6 @@ function renderSequence(state: SelectedReviewState, query = ""): string {
   return `<aside class="review-sequence" aria-label="本次评审变更"><header><div><strong>评审清单</strong><span>${viewedCount} / ${state.selectedChanges.length} 已查看</span></div><label class="review-search"><i data-lucide="search" aria-hidden="true"></i><span class="visually-hidden">搜索评审内容</span><input id="review-search" type="search" name="review-search" data-action="filter-review-changes" value="${escapeHtml(query)}" placeholder="搜索内容…" aria-label="搜索评审清单" autocomplete="off" /></label></header><ol>${rows}${empty}</ol></aside>`;
 }
 
-function renderReviewPosition(state: SelectedReviewState): string {
-  const index = Math.max(0, state.selectedChanges.findIndex((change) => change.id === state.activeChangeId));
-  return `<span class="review-position">第 ${index + 1} / ${state.selectedChanges.length} 项</span>`;
-}
-
 function renderIconButton(action: string, icon: string, label: string, disabled = false): string {
   return `<button type="button" class="icon-button review-step-button" data-action="${action}" ${disabled ? "disabled " : ""}aria-label="${label}" title="${label}"><i data-lucide="${icon}" aria-hidden="true"></i></button>`;
 }
@@ -75,10 +70,12 @@ function renderIconButton(action: string, icon: string, label: string, disabled 
 function renderReviewNavigation(state: SelectedReviewState, disabled = false): string {
   const index = state.selectedChanges.findIndex((change) => change.id === state.activeChangeId);
   const finalItem = index >= state.selectedChanges.length - 1;
-  const next = finalItem
-    ? `<button type="button" class="review-primary-button" data-action="preview-release" ${disabled ? "disabled" : ""}>${disabled ? "正在生成预览…" : "预览发布"}</button>`
-    : renderIconButton("next-review-change", "chevron-right", "查看下一项", disabled);
-  return `<div class="review-step-actions">${renderIconButton("previous-review-change", "chevron-left", "查看上一项", disabled || index <= 0)}${next}</div>`;
+  // Stepping only moves through the queue; the preview is always one click away.
+  const steps = state.selectedChanges.length > 1
+    ? `${renderIconButton("previous-review-change", "chevron-left", "查看上一项", disabled || index <= 0)}${finalItem ? "" : renderIconButton("next-review-change", "chevron-right", "查看下一项", disabled)}`
+    : "";
+  const preview = `<button type="button" class="review-primary-button" data-action="preview-release" ${disabled ? "disabled" : ""}>${disabled ? "正在生成预览…" : "预览发布"}</button>`;
+  return `<div class="review-step-actions">${steps}${preview}</div>`;
 }
 
 type ParsedDiffLine = { kind: "addition" | "deletion" | "context"; oldLine: string; newLine: string; content: string };
@@ -132,7 +129,7 @@ function segmentDiff(lines: ParsedDiffLine[]): DiffSegment[] {
 function diffStats(lines: ParsedDiffLine[]): string {
   const additions = lines.filter((line) => line.kind === "addition").length;
   const deletions = lines.filter((line) => line.kind === "deletion").length;
-  return `修改 · ${additions} additions · ${deletions} deletions`;
+  return `修改 · +${additions} −${deletions}`;
 }
 
 function renderDiffPatch(patch: string): { html: string; stats: string } {
@@ -169,13 +166,13 @@ function renderReviewContent(change: Change | undefined, plan?: ReleasePlan): st
 }
 
 export function renderPublishDialog(plan: ReleasePlan, target: ConnectedTarget): string {
-  return `<dialog data-publish-dialog role="dialog" aria-modal="true" aria-labelledby="publish-title" aria-describedby="publish-description"><form method="dialog" class="publish-dialog"><header><p class="eyebrow">发布确认</p><h2 id="publish-title">确认发布</h2></header><p id="publish-description">确认后将把本次预览中的变更推送到发布目标。</p><dl><div><dt>仓库</dt><dd>${escapeHtml(target.repository)}</dd></div><div><dt>分支</dt><dd>${escapeHtml(target.default_branch)}</dd></div><div><dt>已选变更</dt><dd>${plan.batch.change_ids.length} 项</dd></div><div><dt>受影响文件</dt><dd>${plan.diffs.length} 个</dd></div></dl><footer><button type="button" class="secondary-button" data-action="cancel-publish">取消</button><button type="button" class="review-primary-button" data-action="confirm-publish" data-batch-id="${escapeHtml(plan.batch.id)}">确认发布</button></footer></form></dialog>`;
+  return `<dialog data-publish-dialog role="dialog" aria-modal="true" aria-labelledby="publish-title" aria-describedby="publish-description"><form method="dialog" class="publish-dialog"><header><h2 id="publish-title">确认发布</h2></header><p id="publish-description">本次预览中的变更将推送到发布目标。</p><dl><div><dt>仓库</dt><dd>${escapeHtml(target.repository)}</dd></div><div><dt>分支</dt><dd>${escapeHtml(target.default_branch)}</dd></div><div><dt>已选变更</dt><dd>${plan.batch.change_ids.length} 项</dd></div><div><dt>受影响文件</dt><dd>${plan.diffs.length} 个</dd></div></dl><footer><button type="button" class="secondary-button" data-action="cancel-publish">取消</button><button type="button" class="review-primary-button" data-action="confirm-publish" data-batch-id="${escapeHtml(plan.batch.id)}">确认发布</button></footer></form></dialog>`;
 }
 
 export function renderChangeReview(state: ReviewState, query = ""): string {
   if (state.status === "loading") return '<section class="review-page" aria-labelledby="review-loading-title" aria-busy="true"><h1 id="review-loading-title" class="visually-hidden">正在加载发布评审</h1><p class="review-loading">正在加载评审内容…</p></section>';
   if (state.status === "error") { const action = state.recovery === "retry-preview" ? "retry-preview" : state.recovery === "open-sources" ? "open-sources" : "back-to-changes"; const label = state.recovery === "retry-preview" ? "重试预览" : state.recovery === "open-sources" ? "前往来源" : "返回变更"; return `<section class="review-page" aria-labelledby="review-error-title"><section class="review-recovery" role="alert"><h1 id="review-error-title">无法继续评审</h1><p>${escapeHtml(state.message)}</p><button type="button" class="review-primary-button" data-action="${action}">${label}</button></section></section>`; }
-  if (state.status === "published") return `<section class="review-page" aria-labelledby="review-published-title"><section class="review-published" role="status"><p class="eyebrow">发布完成</p><h1 id="review-published-title">发布已推送</h1><p>提交 <code>${escapeHtml(state.publication.commit_sha)}</code> 已发布。</p><button type="button" data-action="back-to-changes">返回变更</button></section></section>`;
+  if (state.status === "published") return `<section class="review-page" aria-labelledby="review-published-title"><section class="review-published" role="status"><h1 id="review-published-title">发布已推送</h1><p>提交 <code>${escapeHtml(state.publication.commit_sha)}</code> 已发布。</p><button type="button" data-action="back-to-changes">返回变更</button></section></section>`;
   if (state.status === "publishing") return `<section class="review-page" aria-labelledby="review-publishing-title"><section class="review-recovery" role="status"><h1 id="review-publishing-title">正在发布</h1><p>正在向 ${escapeHtml(state.target.repository)} 推送已确认的预览。</p></section></section>`;
   const titleId = state.status === "ready" ? "review-ready-title" : state.status === "previewing" ? "review-previewing-title" : "review-preview-title";
   const title = state.status === "preview" ? "发布预览" : "发布评审";
@@ -183,7 +180,7 @@ export function renderChangeReview(state: ReviewState, query = ""): string {
   const footer = state.status === "preview"
     ? `<footer class="review-actions"><span>${state.plan.diffs.length} 个目标文件</span><button type="button" class="secondary-button" data-action="return-to-review">返回评审</button><button type="button" class="review-primary-button" data-action="open-publish-dialog">确认发布</button></footer>${renderPublishDialog(state.plan, state.target)}`
     : `<footer class="review-actions"><span>${remaining ? `还剩 ${remaining} 项待查看` : "已查看本次全部变更"}</span>${renderReviewNavigation(state, state.status === "previewing")}${state.status === "previewing" ? '<p class="review-operation" role="status" aria-live="polite">正在生成发布预览…</p>' : ""}</footer>`;
-  return `<section class="review-page" aria-labelledby="${titleId}"><header class="review-header"><button type="button" class="back-button" data-action="back-to-changes" aria-label="返回变更" title="返回变更"><i data-lucide="arrow-left" aria-hidden="true"></i></button><div><p class="review-crumb">${escapeHtml(state.scope.scope.name)} · 本次选择 ${state.selectedChanges.length} 项</p><h1 id="${titleId}">${title}</h1></div>${renderReviewPosition(state)}</header><div class="review-layout">${renderSequence(state, query)}<section class="review-pane">${renderReviewContent(activeFrom(state), state.status === "preview" ? state.plan : undefined)}</section></div>${footer}</section>`;
+  return `<section class="review-page" aria-labelledby="${titleId}"><header class="review-header"><button type="button" class="back-button" data-action="back-to-changes" aria-label="返回变更" title="返回变更"><i data-lucide="arrow-left" aria-hidden="true"></i></button><div><p class="review-crumb">${escapeHtml(state.scope.scope.name)} · 本次选择 ${state.selectedChanges.length} 项</p><h1 id="${titleId}">${title}</h1></div></header><div class="review-layout">${renderSequence(state, query)}<section class="review-pane">${renderReviewContent(activeFrom(state), state.status === "preview" ? state.plan : undefined)}</section></div>${footer}</section>`;
 }
 
 export function mountChangeReview(root: HTMLElement, api: ReviewApi = { listScopes, listChanges, listTargets, activeReleasePreview, discardReleasePreview, previewRelease, publishRelease }, context: ReviewContext, navigation: ReviewNavigation, onRendered: () => void = () => undefined): ChangeReviewController {

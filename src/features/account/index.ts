@@ -17,7 +17,6 @@ export function renderAccount(authorization: GithubAuthorization, authorizing: b
 
   return `<section class="account-page" aria-labelledby="account-title">
     <header>
-      <p class="eyebrow">账户</p>
       <h1 id="account-title">GitHub 账户</h1>
     </header>
     <dl class="account-rows">

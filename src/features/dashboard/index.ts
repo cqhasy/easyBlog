@@ -153,7 +153,7 @@ function renderReadyDashboard(rows: DashboardRow[], scanning: boolean): string {
     ? '<p class="dashboard-operation" role="status" aria-live="polite">正在检查所有来源...</p>'
     : "";
 
-  return `<header class="dashboard-header"><div><h1 id="dashboard-title">Dashboard</h1><p>集中查看来源状态与待评审内容。</p></div><button type="button" data-action="check-all" ${scanning ? "disabled" : ""}>${scanning ? "正在检查..." : "检查全部"}</button></header><section class="dashboard-overview" aria-labelledby="dashboard-signal-title"><div class="dashboard-signal"><p class="dashboard-kicker">当前状态</p><h2 id="dashboard-signal-title">${signal}</h2>${operation}</div>${renderSummaryRing(rows, pendingChanges, latestCheck)}</section><section class="dashboard-sources" aria-labelledby="dashboard-sources-title"><header><div><h2 id="dashboard-sources-title">来源</h2><p>按待处理优先级排列</p></div><span>${rows.length} 个已启用</span></header><ul>${rows.map(renderSourceRow).join("")}</ul></section>`;
+  return `<header class="dashboard-header"><h1 id="dashboard-title">Dashboard</h1><button type="button" data-action="check-all" ${scanning ? "disabled" : ""}><i data-lucide="refresh-cw" aria-hidden="true"></i><span>${scanning ? "正在检查..." : "检查全部"}</span></button></header><section class="dashboard-overview" aria-labelledby="dashboard-signal-title"><div class="dashboard-signal"><h2 id="dashboard-signal-title">${signal}</h2>${operation}</div>${renderSummaryRing(rows, pendingChanges, latestCheck)}</section><section class="dashboard-sources" aria-labelledby="dashboard-sources-title"><header><h2 id="dashboard-sources-title">来源</h2><span>${rows.length} 个已启用</span></header><ul>${rows.map(renderSourceRow).join("")}</ul></section>`;
 }
 
 export function renderDashboard(

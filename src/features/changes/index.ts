@@ -160,7 +160,9 @@ function renderChangeRow(change: Change, checked: boolean, depth: number): strin
     ? `<span class="change-unavailable">不可用</span>`
     : `<button type="button" class="change-review-button" data-action="open-review" data-change-id="${escapeHtml(change.id)}" aria-label="评审 ${escapeHtml(fileName)}">评审</button>`;
   const articleTitleMarkup = articleTitle ? `<span class="change-article-title">${escapeHtml(articleTitle)}</span>` : "";
-  return `<li class="change-tree-row change-${change.kind}" style="--tree-depth:${depth}"><label class="change-select"><input type="checkbox" data-change-id="${escapeHtml(change.id)}" ${selection} ${disabled} /><span class="visually-hidden">选择 ${escapeHtml(fileName)}</span></label><div class="change-tree-main"><i data-lucide="file-text" aria-hidden="true"></i><strong>${escapeHtml(fileName)}</strong><span class="change-kind change-kind-${change.kind}">${changeLabel(change.kind)}</span>${articleTitleMarkup}</div><span class="change-note">${escapeHtml(changeNote(change))}</span>${review}</li>`;
+  // The name is the checkbox's label, so the wide part of the row toggles it.
+  const inputId = `change-select-${escapeHtml(change.id)}`;
+  return `<li class="change-tree-row change-${change.kind}" style="--tree-depth:${depth}"><span class="change-select"><input type="checkbox" id="${inputId}" data-change-id="${escapeHtml(change.id)}" ${selection} ${disabled} /></span><label class="change-tree-main" for="${inputId}"><i data-lucide="file-text" aria-hidden="true"></i><strong>${escapeHtml(fileName)}</strong><span class="change-kind change-kind-${change.kind}">${changeLabel(change.kind)}</span>${articleTitleMarkup}</label><span class="change-note">${escapeHtml(changeNote(change))}</span>${review}</li>`;
 }
 
 function renderTreeCheckbox(ids: string[], state: "checked" | "mixed" | "unchecked", label: string): string {
@@ -192,7 +194,7 @@ function renderChangeTree(nodes: ChangeTreeNode[], selected: Set<string>, collap
 }
 
 export function renderChanges(state: ChangesState, selected = new Set<string>(), scanning = false, scopes: ScopeSummary[] = [], collapsed = new Set<string>()): string {
-  const header = `<header class="changes-header"><button type="button" class="back-button changes-back-button" data-action="back-to-dashboard" aria-label="返回 Dashboard" title="返回 Dashboard"><i data-lucide="arrow-left" aria-hidden="true"></i></button><div><p class="eyebrow">发布评审</p><h1 id="changes-title">待发布变更</h1><p>先检测，再选择本次需要评审的内容。</p></div></header>`;
+  const header = `<header class="changes-header"><button type="button" class="back-button changes-back-button" data-action="back-to-dashboard" aria-label="返回 Dashboard" title="返回 Dashboard"><i data-lucide="arrow-left" aria-hidden="true"></i></button><h1 id="changes-title">待发布变更</h1></header>`;
   if (state.status === "loading") return `<section class="changes-page" aria-labelledby="changes-title">${header}<p class="changes-loading" role="status">正在整理待发布内容...</p></section>`;
   if (state.status === "error") return `<section class="changes-page" aria-labelledby="changes-title">${header}<section class="changes-message" role="alert"><strong>暂时无法打开变更清单</strong><p>${escapeHtml(state.message)}</p><button type="button" data-action="retry">重试</button></section></section>`;
   if (state.status === "needs_scope") return `<section class="changes-page" aria-labelledby="changes-title">${header}<section class="changes-empty"><span class="empty-mark" aria-hidden="true">+</span><h2>先添加一个同步范围</h2><p>范围确定了 easyBlog 要检查哪些内容。</p></section></section>`;
@@ -204,14 +206,14 @@ export function renderChanges(state: ChangesState, selected = new Set<string>(),
     : (() => {
       const tree = buildChangeTree(state.changes);
       const ids = treeSelectableIds(tree);
-      return `<section class="changes-list" aria-labelledby="changes-list-title"><header class="changes-list-header"><div><h2 id="changes-list-title">待确认内容</h2><p>按来源目录浏览，选择需要进入评审的文件。</p></div></header><ul class="change-tree" role="tree"><li class="change-tree-root">${renderTreeCheckbox(ids, changeTreeSelectionState(tree, selected), state.scope.scope.name)}<i data-lucide="folder" aria-hidden="true"></i><strong>${escapeHtml(state.scope.scope.name)}</strong><span>${changeCount} 项待确认</span></li>${renderChangeTree(tree, selected, collapsed)}</ul></section>`;
+      return `<section class="changes-list" aria-labelledby="changes-list-title"><header class="changes-list-header"><h2 id="changes-list-title">待确认内容</h2></header><ul class="change-tree" role="tree"><li class="change-tree-root">${renderTreeCheckbox(ids, changeTreeSelectionState(tree, selected), state.scope.scope.name)}<i data-lucide="folder" aria-hidden="true"></i><strong>${escapeHtml(state.scope.scope.name)}</strong><span>${changeCount} 项待确认</span></li>${renderChangeTree(tree, selected, collapsed)}</ul></section>`;
     })();
   const scopeOptions = (scopes.length ? scopes : [state.scope]).map((summary) => `<option value="${escapeHtml(summary.scope.id)}" ${summary.scope.id === state.scope.scope.id ? "selected" : ""}>${escapeHtml(summary.scope.name)}</option>`).join("");
   const operation = scanning
     ? '<p class="changes-operation" role="status" aria-live="polite">正在检测变更...</p>'
     : "";
   const selectionAction = `<span class="changes-selected">已选择 ${selectedChanges.length} 项</span><button type="button" class="review-primary-button" data-action="open-review" ${selectedChanges.length ? "" : "disabled"}>进入评审</button>`;
-  return `<section class="changes-page" aria-labelledby="changes-title">${header}<section class="changes-toolbar" aria-label="检测与评审控制"><div><label for="changes-scope">同步范围</label><select id="changes-scope" data-action="change-scope" ${scanning ? "disabled" : ""}>${scopeOptions}</select><span>${changeCount ? `${changeCount} 项待确认 · ${formatScanTime(state.scannedAt)}` : "检查此范围的新变化"}</span></div><div class="changes-toolbar-actions">${operation}<button type="button" class="icon-button changes-scan-button" data-action="scan" ${scanning ? "disabled" : ""} aria-label="重新检测" title="重新检测"><i data-lucide="refresh-cw" aria-hidden="true"></i></button>${selectionAction}</div></section>${body}</section>`;
+  return `<section class="changes-page" aria-labelledby="changes-title">${header}<section class="changes-toolbar" aria-label="检测与评审控制"><div><label for="changes-scope">同步范围</label><select id="changes-scope" data-action="change-scope" ${scanning ? "disabled" : ""}>${scopeOptions}</select>${state.scannedAt ? `<span>检测于 ${escapeHtml(formatScanTime(state.scannedAt))}</span>` : ""}</div><div class="changes-toolbar-actions">${operation}<button type="button" class="icon-button changes-scan-button" data-action="scan" ${scanning ? "disabled" : ""} aria-label="重新检测" title="重新检测"><i data-lucide="refresh-cw" aria-hidden="true"></i></button>${selectionAction}</div></section>${body}</section>`;
 }
 
 export type ChangesController = { refresh: () => void };

@@ -1,7 +1,6 @@
 export function renderSettings(): string {
   return `<section class="settings-page" aria-labelledby="settings-title">
     <header>
-      <p class="eyebrow">应用设置</p>
       <h1 id="settings-title">设置</h1>
     </header>
     <dl class="settings-rows">

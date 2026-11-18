@@ -346,7 +346,7 @@ describe("sources feature", () => {
     expect(html).toContain("Posts");
     expect(html).toContain("owner/blog");
     expect(html).toContain("同步状态");
-    expect(html).toContain("编辑来源");
+    expect(html).toContain("新建范围");
     expect(html).toContain('data-scope-id="scope-1"');
   });
 
@@ -435,7 +435,8 @@ describe("sources feature", () => {
       targets: [],
     });
 
-    expect(html).toContain('<p class="eyebrow">内容资源</p>');
+    expect(html).not.toContain('class="eyebrow"');
+    expect(html).not.toContain('class="sources-subtitle"');
     expect(html).not.toContain("EASYBLOG / SOURCES");
     expect(html).toContain('<section class="resource-overview-region" aria-label="资源详情">');
     expect(html).toContain('class="task-primary-button resource-add-button" data-action="add-source"');

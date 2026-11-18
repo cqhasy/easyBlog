@@ -215,11 +215,12 @@ describe("focused change review", () => {
     expect(discarded).toEqual(["batch-publish-failed"]);
   });
 
-  it("uses icon-only previous and next controls and turns the final next action into preview", () => {
+  it("uses icon-only previous and next controls and keeps preview available on every item", () => {
     const first = renderChangeReview(reviewState([change("added", "a"), change("updated", "b")], "a"));
     const last = renderChangeReview(reviewState([change("added", "a"), change("updated", "b")], "b"));
     expect(first).toContain('data-action="previous-review-change" disabled aria-label="查看上一项" title="查看上一项"');
     expect(first).toContain('data-lucide="chevron-right"');
+    expect(first).toContain('data-action="preview-release"');
     expect(last).toContain('data-action="preview-release"');
     expect(last).not.toContain('data-action="next-review-change"');
   });

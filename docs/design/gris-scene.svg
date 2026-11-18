@@ -1,0 +1,189 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1000" viewBox="0 0 1600 1000">
+  <!--
+    Backdrop source for the easyBlog shell. Rendered to public/gris-scene.jpg
+    (see docs/decisions/frontend-design.md). Composition rules:
+    - the left 300 units stay pale so sidebar text keeps its contrast;
+    - the top 250 units stay soft because page headers sit above them.
+  -->
+  <defs>
+    <linearGradient id="sky" x1="0" y1="0" x2="0.85" y2="1">
+      <stop offset="0" stop-color="#fdf6ec"/>
+      <stop offset="0.48" stop-color="#fbeadf"/>
+      <stop offset="1" stop-color="#f7cdc1"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#fffdf7"/>
+      <stop offset="0.34" stop-color="#fff5e6" stop-opacity="0.82"/>
+      <stop offset="1" stop-color="#ffeedd" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="mist" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#fbe4da" stop-opacity="0"/>
+      <stop offset="0.55" stop-color="#fbe4da" stop-opacity="0.55"/>
+      <stop offset="1" stop-color="#fbe4da" stop-opacity="0"/>
+    </linearGradient>
+
+    <!-- Wet-on-wet edge: warp the shape, then let it bleed a little. -->
+    <filter id="wash" x="-20%" y="-20%" width="140%" height="140%" color-interpolation-filters="sRGB">
+      <feTurbulence type="fractalNoise" baseFrequency="0.006 0.010" numOctaves="4" seed="11" result="noise"/>
+      <feDisplacementMap in="SourceGraphic" in2="noise" scale="120" xChannelSelector="R" yChannelSelector="B" result="warped"/>
+      <feGaussianBlur in="warped" stdDeviation="2.4"/>
+    </filter>
+    <filter id="wash-soft" x="-20%" y="-20%" width="140%" height="140%" color-interpolation-filters="sRGB">
+      <feTurbulence type="fractalNoise" baseFrequency="0.005 0.008" numOctaves="3" seed="29" result="noise"/>
+      <feDisplacementMap in="SourceGraphic" in2="noise" scale="150" xChannelSelector="G" yChannelSelector="R" result="warped"/>
+      <feGaussianBlur in="warped" stdDeviation="9"/>
+    </filter>
+    <!-- Pigment pooling: the same warp, but the paint thins out unevenly. -->
+    <filter id="pigment" x="-20%" y="-20%" width="140%" height="140%" color-interpolation-filters="sRGB">
+      <feTurbulence type="fractalNoise" baseFrequency="0.014 0.02" numOctaves="5" seed="41" result="noise"/>
+      <feColorMatrix in="noise" type="matrix" values="0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  2.6 0 0 0 -0.82" result="pool"/>
+      <feDisplacementMap in="SourceGraphic" in2="noise" scale="90" xChannelSelector="R" yChannelSelector="G" result="warped"/>
+      <feComposite in="warped" in2="pool" operator="in" result="pooled"/>
+      <feGaussianBlur in="pooled" stdDeviation="3"/>
+    </filter>
+    <filter id="ridge" x="-5%" y="-30%" width="110%" height="160%" color-interpolation-filters="sRGB">
+      <feTurbulence type="fractalNoise" baseFrequency="0.012 0.03" numOctaves="4" seed="5" result="noise"/>
+      <feDisplacementMap in="SourceGraphic" in2="noise" scale="34" xChannelSelector="R" yChannelSelector="G" result="warped"/>
+      <feGaussianBlur in="warped" stdDeviation="1.1"/>
+    </filter>
+    <!-- Pen line: barely trembling, never blurred. -->
+    <filter id="pen" x="-5%" y="-5%" width="110%" height="110%" color-interpolation-filters="sRGB">
+      <feTurbulence type="fractalNoise" baseFrequency="0.05" numOctaves="2" seed="3" result="noise"/>
+      <feDisplacementMap in="SourceGraphic" in2="noise" scale="2.2" xChannelSelector="R" yChannelSelector="G"/>
+    </filter>
+  </defs>
+
+  <rect width="1600" height="1000" fill="url(#sky)"/>
+
+  <!-- Blush that reaches into the pale sky -->
+  <g filter="url(#wash-soft)" fill="#f6b3a6" opacity="0.5">
+    <circle cx="560" cy="250" r="190"/>
+    <circle cx="430" cy="610" r="210"/>
+    <circle cx="760" cy="640" r="200"/>
+    <circle cx="150" cy="760" r="170"/>
+  </g>
+
+  <!-- Sun -->
+  <circle cx="132" cy="436" r="230" fill="url(#glow)"/>
+  <circle cx="132" cy="436" r="66" fill="#fffcf4"/>
+
+  <!-- The great cloud: light rim first, body on top, pooled pigment last -->
+  <g filter="url(#wash)" fill="#f29283" opacity="0.78">
+    <circle cx="700" cy="330" r="150"/>
+    <circle cx="820" cy="170" r="170"/>
+    <circle cx="610" cy="520" r="140"/>
+    <circle cx="980" cy="70" r="180"/>
+    <circle cx="560" cy="690" r="130"/>
+    <circle cx="1240" cy="20" r="170"/>
+  </g>
+  <g filter="url(#wash)" fill="#e2524a" opacity="0.9">
+    <circle cx="930" cy="290" r="200"/>
+    <circle cx="1150" cy="190" r="240"/>
+    <circle cx="1410" cy="210" r="270"/>
+    <circle cx="1280" cy="430" r="270"/>
+    <circle cx="1010" cy="480" r="210"/>
+    <circle cx="1540" cy="470" r="250"/>
+    <circle cx="820" cy="520" r="150"/>
+    <circle cx="1120" cy="640" r="230"/>
+    <circle cx="1400" cy="660" r="260"/>
+    <circle cx="880" cy="700" r="170"/>
+    <circle cx="720" cy="760" r="120"/>
+  </g>
+  <g filter="url(#pigment)" fill="#c73a3c" opacity="0.6">
+    <circle cx="1220" cy="330" r="250"/>
+    <circle cx="1460" cy="420" r="230"/>
+    <circle cx="1010" cy="430" r="180"/>
+    <circle cx="1290" cy="620" r="240"/>
+    <circle cx="930" cy="640" r="150"/>
+  </g>
+  <g filter="url(#pigment)" fill="#f6a597" opacity="0.5">
+    <circle cx="1080" cy="160" r="150"/>
+    <circle cx="1350" cy="120" r="170"/>
+    <circle cx="860" cy="330" r="120"/>
+  </g>
+
+  <!-- Valley mist -->
+  <rect x="0" y="620" width="1600" height="240" fill="url(#mist)"/>
+
+  <!-- Ridges -->
+  <g filter="url(#ridge)">
+    <path d="M-40 800 C120 740 250 770 380 748 C520 722 640 786 800 760 C960 734 1100 792 1260 762 C1400 738 1520 776 1640 748 L1640 1040 L-40 1040 Z" fill="#f2a093" opacity="0.86"/>
+    <path d="M-40 872 C100 838 230 862 370 842 C540 816 690 884 860 858 C1040 830 1190 890 1360 862 C1470 844 1560 866 1640 850 L1640 1040 L-40 1040 Z" fill="#e0625a" opacity="0.9"/>
+    <path d="M-40 942 C160 910 330 944 520 926 C720 906 900 962 1120 938 C1320 916 1480 950 1640 928 L1640 1040 L-40 1040 Z" fill="#bd373c"/>
+  </g>
+  <g filter="url(#pigment)" fill="#9e2b35" opacity="0.55">
+    <ellipse cx="420" cy="990" rx="360" ry="46"/>
+    <ellipse cx="1230" cy="992" rx="420" ry="44"/>
+  </g>
+
+  <!-- Ink work -->
+  <g filter="url(#pen)" fill="none" stroke="#4a2b37" stroke-linecap="round" stroke-linejoin="round" opacity="0.82">
+    <!-- two masts beside the sun -->
+    <g stroke-width="2.2">
+      <path d="M92 588 L92 952"/>
+      <path d="M232 506 L232 934"/>
+    </g>
+    <g stroke-width="1.6">
+      <path d="M92 588 L92 572"/>
+      <path d="M82 616 C86 626 98 626 102 616 Z" fill="#4a2b37"/>
+      <path d="M86 652 L98 652"/>
+      <path d="M232 506 L232 484"/>
+      <path d="M220 540 C225 552 239 552 244 540 Z" fill="#4a2b37"/>
+      <path d="M225 592 L239 592"/>
+      <path d="M227 604 L237 604"/>
+      <circle cx="232" cy="476" r="4"/>
+    </g>
+
+    <!-- the tall needle -->
+    <path d="M470 118 L470 900" stroke-width="2"/>
+    <g stroke-width="1.5">
+      <path d="M470 118 L470 86"/>
+      <path d="M462 168 L478 168"/>
+      <path d="M464 180 L476 180"/>
+      <path d="M458 300 C463 314 477 314 482 300 Z" fill="#4a2b37"/>
+      <path d="M463 452 L477 452"/>
+      <path d="M460 610 C464 622 476 622 480 610 Z" fill="#4a2b37"/>
+    </g>
+
+    <!-- low lamps in the valley -->
+    <g stroke-width="2">
+      <path d="M690 720 L690 900"/>
+      <path d="M1010 742 L1010 904"/>
+      <path d="M1076 776 L1076 900"/>
+    </g>
+    <g stroke-width="1.5">
+      <path d="M676 742 C682 758 698 758 704 742 Z" fill="#4a2b37"/>
+      <path d="M690 720 L690 706"/>
+      <path d="M998 762 C1003 776 1017 776 1022 762 Z" fill="#4a2b37"/>
+      <path d="M1066 792 C1070 804 1082 804 1086 792 Z" fill="#4a2b37"/>
+    </g>
+
+    <!-- gantry and pendulum -->
+    <g stroke-width="2.6">
+      <path d="M1130 150 L1420 150"/>
+      <path d="M1158 150 L1158 560"/>
+      <path d="M1392 150 L1392 640"/>
+    </g>
+    <g stroke-width="1.7">
+      <path d="M1130 162 L1420 162"/>
+      <path d="M1158 196 L1392 196"/>
+      <path d="M1158 150 L1196 196 L1234 150 L1275 196 L1316 150 L1354 196 L1392 150"/>
+      <path d="M1158 196 L1158 232 M1392 196 L1392 232"/>
+      <path d="M1158 420 A117 150 0 0 1 1392 420"/>
+      <path d="M1182 420 A93 122 0 0 1 1368 420"/>
+      <path d="M1275 196 L1275 372"/>
+      <circle cx="1275" cy="402" r="30"/>
+      <circle cx="1275" cy="402" r="15"/>
+      <circle cx="1275" cy="402" r="4" fill="#4a2b37"/>
+      <path d="M1213 402 A62 62 0 0 0 1337 402"/>
+      <path d="M1420 150 L1456 150 L1456 164"/>
+    </g>
+  </g>
+
+  <!-- Dark shards in the foreground -->
+  <g fill="#4a2532" opacity="0.92">
+    <path d="M248 1000 L286 934 L318 962 L352 1000 Z"/>
+    <path d="M1338 1000 L1372 948 L1404 918 L1452 970 L1470 1000 Z"/>
+    <path d="M1496 1000 L1516 962 L1548 1000 Z"/>
+  </g>
+</svg>
